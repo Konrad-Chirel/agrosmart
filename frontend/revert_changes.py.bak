@@ -1,0 +1,69 @@
+import json
+import os
+
+transcript_path = r'C:\Users\kevin\.gemini\antigravity\brain\211f90ed-d090-4546-9a54-a15cca45f2ba\.system_generated\logs\transcript_full.jsonl'
+target_step = 3547
+
+# Load all tool calls from target_step onwards
+actions = []
+with open(transcript_path, 'r', encoding='utf-8') as f:
+    for line in f:
+        try:
+            d = json.loads(line)
+            if d.get('step_index', 0) > target_step and d.get('type') == 'PLANNER_RESPONSE':
+                for call in d.get('tool_calls', []):
+                    if call.get('name') in ['replace_file_content', 'write_to_file', 'multi_replace_file_content']:
+                        actions.append(call)
+        except Exception:
+            pass
+
+print(f"Found {len(actions)} modifying tool calls to revert.")
+
+# Reverse the actions array so we undo the most recent edits first
+actions.reverse()
+
+for action in actions:
+    name = action['name']
+    args = action['args']
+    file_path = args.get('TargetFile')
+    
+    if not os.path.exists(file_path):
+        print(f"File {file_path} doesn't exist, skipping.")
+        continue
+        
+    with open(file_path, 'r', encoding='utf-8') as f:
+        content = f.read()
+
+    print(f"Reverting {name} on {os.path.basename(file_path)}")
+    
+    if name == 'replace_file_content':
+        # Revert by replacing ReplacementContent with TargetContent
+        target = args.get('ReplacementContent', '')
+        replacement = args.get('TargetContent', '')
+        if target in content:
+            content = content.replace(target, replacement, 1)
+        else:
+            print(f"  Warning: Target content not found in {file_path}")
+            
+    elif name == 'multi_replace_file_content':
+        chunks = args.get('ReplacementChunks', [])
+        # To revert correctly without messing up indices, we might need to apply them in reverse if they overlap, 
+        # but string replace is safer if the chunks are unique.
+        for chunk in chunks:
+            target = chunk.get('ReplacementContent', '')
+            replacement = chunk.get('TargetContent', '')
+            if target in content:
+                content = content.replace(target, replacement, 1)
+            else:
+                print(f"  Warning: Multi-Target content not found in {file_path}")
+                
+    elif name == 'write_to_file':
+        print(f"  Warning: Reverting write_to_file for {file_path}. Cannot undo creation automatically. You must restore this from a backup if it existed previously, or delete it.")
+        # We don't delete because we don't know if we overwrote an existing file or created a new one.
+        # Actually, we can check if there was a previous state in the transcript.
+        
+    # Write back
+    with open(file_path, 'w', encoding='utf-8') as f:
+        f.write(content)
+
+print("Reversion complete.")

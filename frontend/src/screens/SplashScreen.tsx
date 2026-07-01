@@ -1,6 +1,8 @@
 import { MaterialIcons } from "@expo/vector-icons";
-import { ImageBackground, StyleSheet, Text, View } from "react-native";
+import { useEffect, useState } from "react";
+import { ActivityIndicator, ImageBackground, StyleSheet, Text, View } from "react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { AppButton } from "../components/AppButton";
 import { images } from "../data/mockData";
 import { colors, fonts, spacing, type } from "../theme";
@@ -9,6 +11,31 @@ import type { RootStackParamList } from "../navigation/RootNavigator";
 type Props = NativeStackScreenProps<RootStackParamList, "Splash">;
 
 export function SplashScreen({ navigation }: Props) {
+  const [checking, setChecking] = useState(true);
+
+  useEffect(() => {
+    async function checkAuth() {
+      try {
+        const token = await AsyncStorage.getItem("auth_token");
+        const culture = await AsyncStorage.getItem("current_culture_id");
+        if (token && culture) {
+          navigation.replace("MainTabs" as any);
+          return;
+        }
+      } catch (e) {}
+      setChecking(false);
+    }
+    checkAuth();
+  }, []);
+
+  if (checking) {
+    return (
+      <View style={{ flex: 1, backgroundColor: colors.surface, alignItems: "center", justifyContent: "center" }}>
+        <ActivityIndicator size="large" color={colors.primary} />
+      </View>
+    );
+  }
+
   return (
     <ImageBackground source={{ uri: images.splash }} style={styles.bg} resizeMode="cover">
       <View style={styles.overlay} />
@@ -22,6 +49,7 @@ export function SplashScreen({ navigation }: Props) {
       </View>
       <View style={styles.footer}>
         <AppButton label="Commencer" icon="arrow-forward" variant="light" onPress={() => navigation.navigate("Profile")} />
+        <AppButton label="Se connecter" icon="login" onPress={() => navigation.navigate("Login" as any)} style={{ backgroundColor: "rgba(255,255,255,0.2)" }} />
         <View style={styles.dots}>
           <View style={styles.dotActive} />
           {[1, 2, 3, 4].map((item) => (

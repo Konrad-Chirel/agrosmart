@@ -1,10 +1,12 @@
 import { MaterialIcons } from "@expo/vector-icons";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useEffect, useRef, useState } from "react";
-import { Animated, Image, ImageBackground, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Alert, Animated, Image, ImageBackground, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { images } from "../data/mockData";
 import { colors, fonts, radius, shadow, spacing, type } from "../theme";
 import type { RootStackParamList } from "../navigation/RootNavigator";
+import { useOnboarding } from "../data/onboardingState";
+import { AgrosmartService } from "../services/AgrosmartService";
 
 type Props = NativeStackScreenProps<RootStackParamList, "NotificationsIntro">;
 type IconName = keyof typeof MaterialIcons.glyphMap;
@@ -31,6 +33,32 @@ const alertExamples = [
 export function NotificationsIntroScreen({ navigation }: Props) {
   const bellMotion = useRef(new Animated.Value(0)).current;
   const ringPulse = useRef(new Animated.Value(0)).current;
+  const { firstName, city, phone, password, passwordConfirmation, crop, sowingDate, surface, surfaceUnit } = useOnboarding();
+  const [loading, setLoading] = useState(false);
+
+  const handleNext = async () => {
+    try {
+      setLoading(true);
+      
+      // Essayer de récupérer l'heure recommandée si possible
+      let heure = "06h30";
+      try {
+        const program = await AgrosmartService.getProgram();
+        if (program && program[0] && program[0].heure_recommandee) {
+          heure = program[0].heure_recommandee.slice(0, 5).replace(':', 'h');
+        }
+      } catch (e) {
+        console.log("Impossible de récupérer le programme, utilisation de l'heure par défaut");
+      }
+
+      navigation.navigate("WelcomeSuccess" as any, { heureRecommandee: heure });
+    } catch (e) {
+      console.log(e);
+      Alert.alert("Erreur", "Connexion au backend impossible. Vérifiez que Laravel est lancé.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
     const bellLoop = Animated.loop(
@@ -91,11 +119,19 @@ export function NotificationsIntroScreen({ navigation }: Props) {
           ))}
         </View>
 
-        <HoverButton label="Activer les notifications" onPress={() => navigation.navigate("WelcomeSuccess")} />
-
-        <Pressable onPress={() => navigation.navigate("WelcomeSuccess")} style={styles.laterButton}>
-          <Text style={styles.laterText}>Plus tard</Text>
-        </Pressable>
+        {loading ? (
+          <View style={{ alignItems: 'center', marginVertical: 20 }}>
+            <ActivityIndicator color={colors.onPrimary} size="large" />
+            <Text style={{ color: colors.onPrimary, marginTop: 10 }}>Création de votre champ...</Text>
+          </View>
+        ) : (
+          <>
+            <HoverButton label="Activer les notifications" onPress={handleNext} />
+            <Pressable onPress={handleNext} style={styles.laterButton}>
+              <Text style={styles.laterText}>Plus tard</Text>
+            </Pressable>
+          </>
+        )}
 
         <View style={styles.dots}>
           {[0, 1, 2, 3].map((item) => <View key={item} style={styles.dot} />)}

@@ -1,0 +1,29 @@
+import json
+
+target_msg = 'analyse tout le projet et dis moi'
+found_msg = False
+modified_files = set()
+
+with open(r'C:\Users\kevin\.gemini\antigravity\brain\211f90ed-d090-4546-9a54-a15cca45f2ba\.system_generated\logs\transcript_full.jsonl', 'r', encoding='utf-8') as f:
+    for line in f:
+        try:
+            d = json.loads(line)
+            if d.get('type') == 'USER_INPUT' and target_msg in d.get('content', ''):
+                found_msg = True
+                print('Found target message at step ' + str(d.get('step_index')))
+            
+            if found_msg and d.get('type') == 'PLANNER_RESPONSE':
+                tool_calls = d.get('tool_calls', [])
+                for call in tool_calls:
+                    name = call.get('name')
+                    if name in ['replace_file_content', 'write_to_file', 'multi_replace_file_content']:
+                        args = call.get('args', {})
+                        file_path = args.get('TargetFile')
+                        if file_path:
+                            modified_files.add(file_path)
+        except Exception:
+            pass
+
+print('\nFiles modified since target message:')
+for f in modified_files:
+    print(f)

@@ -25,12 +25,12 @@ export function CultureCard({ culture }: Props) {
         <Image source={{ uri: culture.image }} style={styles.image} />
         <View style={styles.info}>
           <View style={styles.titleRow}>
-            <Text style={styles.name}>{culture.name}</Text>
+            <Text style={styles.name}>{culture.emoji || "🌱"} {culture.name}</Text>
             <Text style={[styles.badge, culture.alert ? styles.badgeMuted : styles.badgeWarm]}>{culture.stage}</Text>
           </View>
           <View style={styles.healthRow}>
             <View style={[styles.dot, { backgroundColor: tone }]} />
-            <Text style={[styles.health, { color: tone }]}>{culture.health}</Text>
+            <Text style={[styles.health, { color: culture.alert ? "#c2410c" : "#15803d" }]}>{culture.health}</Text>
           </View>
           <Text style={styles.week}>Croissance : {culture.week}</Text>
           <View style={styles.progressBg}>
@@ -70,19 +70,19 @@ const styles = StyleSheet.create({
     ...shadow.card,
   },
   top: { flexDirection: "row", gap: 14 },
-  image: { width: 96, height: 96, borderRadius: radius.lg },
+  image: { width: 96, height: 96, borderRadius: radius.lg, backgroundColor: "#dce4d9" },
   info: { flex: 1 },
   titleRow: { flexDirection: "row", justifyContent: "space-between", gap: 8, alignItems: "flex-start" },
   name: { ...type.h2, fontFamily: fonts.heading, color: colors.onSurface, flex: 1 },
   badge: { ...type.labelSm, fontFamily: fonts.body, borderRadius: radius.md, paddingHorizontal: 8, paddingVertical: 4, overflow: "hidden" },
-  badgeWarm: { backgroundColor: colors.tertiaryFixed, color: colors.onTertiaryFixed },
+  badgeWarm: { backgroundColor: "#fbcfe8", color: "#831843" },
   badgeMuted: { backgroundColor: colors.surfaceContainerHigh, color: colors.onSurfaceVariant },
   healthRow: { flexDirection: "row", gap: 6, alignItems: "center", marginTop: 6 },
   dot: { width: 9, height: 9, borderRadius: 5 },
   health: { ...type.labelSm, fontFamily: fonts.body },
   week: { ...type.labelSm, fontFamily: fonts.body, color: colors.onSurfaceVariant, marginTop: 12 },
-  progressBg: { height: 10, borderRadius: 5, backgroundColor: colors.surfaceContainer, overflow: "hidden", marginTop: 5 },
-  progressFill: { height: "100%", borderRadius: 5, backgroundColor: colors.primaryFixedDim },
+  progressBg: { height: 10, borderRadius: 5, backgroundColor: "#e2e8f0", overflow: "hidden", marginTop: 5 },
+  progressFill: { height: "100%", borderRadius: 5, backgroundColor: "#4ade80" },
   percent: { ...type.labelSm, fontFamily: fonts.body, color: colors.onSurface, alignSelf: "flex-end", marginTop: 2 },
   bottom: { flexDirection: "row", borderTopWidth: 1, borderTopColor: `${colors.outlineVariant}55`, marginTop: 16, paddingTop: 14, gap: 10 },
   stat: { flex: 1, flexDirection: "row", alignItems: "center", gap: 6 },

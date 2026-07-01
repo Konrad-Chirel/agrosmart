@@ -26,8 +26,12 @@ type SurfaceUnit = "m²" | "ha";
 
 type OnboardingState = {
   firstName: string;
+  lastName: string;
   city: string;
   language: string;
+  phone: string;
+  password: string;
+  passwordConfirmation: string;
   profileImage: string;
   crop: OnboardingCrop;
   sowingDate: string;
@@ -35,8 +39,12 @@ type OnboardingState = {
   surfaceUnit: SurfaceUnit;
   cultures: ManagedCulture[];
   setFirstName: (value: string) => void;
+  setLastName: (value: string) => void;
   setCity: (value: string) => void;
   setLanguage: (value: string) => void;
+  setPhone:  (value: string) => void;
+  setPassword: (value: string) => void;
+  setPasswordConfirmation: (value: string) => void;
   setProfileImage: (value: string) => void;
   setCrop: (value: OnboardingCrop) => void;
   setSowingDate: (value: string) => void;
@@ -88,8 +96,12 @@ function pluralizeCropName(name: string) {
 
 export function OnboardingProvider({ children }: { children: ReactNode }) {
   const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
   const [city, setCity] = useState("");
-  const [language, setLanguage] = useState("Français");
+  const [language, setLanguage] = useState("Fran?ais");
+  const [phone, setPhone] = useState("");
+  const [password, setPassword] = useState("");
+  const [passwordConfirmation, setPasswordConfirmation] = useState("");
   const [profileImage, setProfileImage] = useState(images.farmer);
   const [crop, setCrop] = useState(defaultCrop);
   const [sowingDate, setSowingDate] = useState("02/06/2026");
@@ -120,8 +132,12 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
     <OnboardingContext.Provider
       value={{
         firstName,
+        lastName,
         city,
         language,
+        phone,
+        password,
+        passwordConfirmation,
         profileImage,
         crop,
         sowingDate,
@@ -129,8 +145,12 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
         surfaceUnit,
         cultures,
         setFirstName,
+        setLastName,
         setCity,
         setLanguage,
+        setPhone,
+        setPassword,
+        setPasswordConfirmation,
         setProfileImage,
         setCrop,
         setSowingDate,

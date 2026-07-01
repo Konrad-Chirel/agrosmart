@@ -3,9 +3,10 @@ import { CompositeScreenProps } from "@react-navigation/native";
 import { BottomTabScreenProps } from "@react-navigation/bottom-tabs";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useEffect, useRef, useState } from "react";
-import { Animated, ImageBackground, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Animated, ImageBackground, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { AppHeader } from "../components/AppHeader";
 import { Screen } from "../components/Screen";
+import { AgrosmartService } from "../services/AgrosmartService";
 import { colors, fonts, radius, shadow, spacing, type } from "../theme";
 import type { MainTabParamList, RootStackParamList } from "../navigation/RootNavigator";
 
@@ -15,7 +16,9 @@ const adviceImage =
   "https://lh3.googleusercontent.com/aida-public/AB6AXuB5BRKpbA-VIeMUATtTJf11n7i73LBI2e1llfLFkaSg8OyBeQHnCRzGhLb0N5Q1DZbVTSKcvPTuxMvfQwcXAddf200vO8woDjXfgepEUMbw_ElhPI8v2OKESmgkntEuLsvr2dQrl7MPXZ8oxKZPnvVyignUokt_A0Dorff1dE_w93H3Wib4xQSRhmvxLHq46i6WT7mgcb3Xb9asH-G3MCyijAPQU9DRGDVnWW1I71j9sBW1PXMXUbZBVazd8uiOrwSdVbxZlodu7dDm";
 
 export function AlertsScreen({ navigation }: Props) {
-  const [showReservoir, setShowReservoir] = useState(true);
+  const [alerts, setAlerts] = useState<any[]>([]);
+  const [conseil, setConseil] = useState<string>("L'arrosage matinal réduit l'évaporation de 30%.");
+  const [loading, setLoading] = useState(true);
   const pulse = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -29,6 +32,52 @@ export function AlertsScreen({ navigation }: Props) {
     return () => loop.stop();
   }, [pulse]);
 
+  useEffect(() => {
+    let mounted = true;
+    const fetchAlerts = async () => {
+      try {
+        setLoading(true);
+        const data = await AgrosmartService.getAlerts();
+        if (mounted) {
+          setAlerts(data.alertes || []);
+          if (data.conseil_expert) setConseil(data.conseil_expert);
+        }
+      } catch (error) {
+        console.log("Erreur chargement alertes", error);
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    };
+    fetchAlerts();
+    return () => { mounted = false; };
+  }, []);
+
+  const formatTimeAgo = (dateStr: string) => {
+    const date = new Date(dateStr);
+    const diff = Math.floor((new Date().getTime() - date.getTime()) / 60000); // in minutes
+    if (diff < 1) return "À l'instant";
+    if (diff < 60) return `Il y a ${diff} min`;
+    const hours = Math.floor(diff / 60);
+    if (hours < 24) return `Il y a ${hours} heure${hours > 1 ? 's' : ''}`;
+    const days = Math.floor(hours / 24);
+    return `Il y a ${days} jour${days > 1 ? 's' : ''}`;
+  };
+
+  const getAlertStyles = (niveau: string) => {
+    switch (niveau) {
+      case 'critique':
+      case 'urgence':
+        return { card: styles.dangerCard, iconBg: styles.dangerIcon, iconColor: colors.error, titleColor: colors.error, icon: "warning" };
+      case 'succes':
+      case 'info':
+        return { card: styles.successCard, iconBg: styles.successIcon, iconColor: colors.primary, titleColor: colors.primary, icon: "check-circle" };
+      case 'avertissement':
+      case 'warning':
+      default:
+        return { card: styles.warningCard, iconBg: styles.warningIcon, iconColor: colors.secondary, titleColor: colors.secondary, icon: "info-outline" };
+    }
+  };
+
   return (
     <Screen>
       <AppHeader />
@@ -37,92 +86,63 @@ export function AlertsScreen({ navigation }: Props) {
         <Text style={styles.copy}>Surveillez l'état de vos parcelles en temps réel.</Text>
       </View>
 
-      <View style={[styles.alertCard, styles.dangerCard]}>
-        <View style={styles.alertHeader}>
-          <View style={styles.alertTitleGroup}>
-            <Animated.View
-              style={[
-                styles.iconCircle,
-                styles.dangerIcon,
-                {
-                  transform: [{ scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.08] }) }],
-                  opacity: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.82, 1] }),
-                },
-              ]}
-            >
-              <MaterialIcons name="water-drop" size={26} color={colors.error} />
-            </Animated.View>
-            <View style={styles.alertTitleText}>
-              <Text style={[styles.alertTitle, { color: colors.error }]}>Sol trop sec</Text>
-              <Text style={styles.meta}>Parcelle Nord • Il y a 5 min</Text>
-            </View>
+      <ScrollView contentContainerStyle={{ paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
+        {loading ? (
+          <ActivityIndicator size="large" color={colors.primary} style={{ marginTop: 40 }} />
+        ) : alerts.length === 0 ? (
+          <View style={{ alignItems: "center", marginTop: 60 }}>
+            <MaterialIcons name="notifications-none" size={64} color={colors.outlineVariant} />
+            <Text style={{ fontFamily: fonts.heading, fontSize: 18, color: colors.onSurfaceVariant, marginTop: 16 }}>Rien cette semaine</Text>
+            <Text style={{ fontFamily: fonts.body, fontSize: 14, color: colors.outline, marginTop: 8, textAlign: "center", paddingHorizontal: 20 }}>
+              Tout va bien, votre parcelle se porte à merveille !
+            </Text>
           </View>
-          <View style={styles.urgentPill}>
-            <Text style={styles.urgentText}>URGENT</Text>
-          </View>
-        </View>
-        <Text style={styles.message}>
-          L'humidité du sol est tombée à 12%, ce qui est inférieur au seuil critique pour votre culture de maïs.
-        </Text>
-        <Pressable onPress={() => navigation.navigate("WateringActive", { cultureName: "Maïs doux" })} style={({ pressed }) => [styles.primaryAction, pressed && styles.pressed]}>
-          <MaterialIcons name="bolt" size={20} color={colors.onPrimary} />
-          <Text style={styles.primaryActionText}>Arroser maintenant</Text>
-        </Pressable>
-      </View>
+        ) : (
+          alerts.map((alerte) => {
+            const ui = getAlertStyles(alerte.niveau || 'avertissement');
+            const isUrgent = alerte.niveau === 'critique' || alerte.niveau === 'urgence';
 
-      {showReservoir ? (
-        <View style={[styles.alertCard, styles.warningCard]}>
-          <View style={styles.alertHeader}>
-            <View style={styles.alertTitleGroup}>
-              <View style={[styles.iconCircle, styles.warningIcon]}>
-                <MaterialIcons name="propane-tank" size={26} color={colors.secondary} />
+            return (
+              <View key={alerte.id} style={[styles.alertCard, ui.card]}>
+                <View style={styles.alertHeader}>
+                  <View style={styles.alertTitleGroup}>
+                    <Animated.View style={[styles.iconCircle, ui.iconBg, isUrgent && { transform: [{ scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.08] }) }], opacity: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.82, 1] }) }]}>
+                      <MaterialIcons name={ui.icon} size={26} color={ui.iconColor} />
+                    </Animated.View>
+                    <View style={styles.alertTitleText}>
+                      <Text style={[styles.alertTitle, { color: ui.titleColor }]}>{alerte.titre || alerte.type_alerte}</Text>
+                      <Text style={styles.meta}>
+                        Parcelle {alerte.parcelle_id} • {formatTimeAgo(alerte.created_at)}
+                      </Text>
+                    </View>
+                  </View>
+                  {isUrgent && (
+                    <View style={styles.urgentPill}>
+                      <Text style={styles.urgentText}>URGENT</Text>
+                    </View>
+                  )}
+                </View>
+                <Text style={styles.message}>{alerte.message}</Text>
+                
+                {isUrgent && (
+                  <Pressable onPress={() => navigation.navigate("ManualProgramming")} style={({ pressed }) => [styles.primaryAction, pressed && styles.pressed]}>
+                    <MaterialIcons name="bolt" size={20} color={colors.onPrimary} />
+                    <Text style={styles.primaryActionText}>Gérer l'arrosage</Text>
+                  </Pressable>
+                )}
               </View>
-              <View style={styles.alertTitleText}>
-                <Text style={[styles.alertTitle, { color: colors.secondary }]}>Réservoir à 20%</Text>
-                <Text style={styles.meta}>Source A • Il y a 2 heures</Text>
-              </View>
-            </View>
-          </View>
-          <Text style={styles.message}>
-            Le niveau d'eau dans votre réservoir principal est bas. Prévoyez un remplissage pour maintenir les cycles d'irrigation.
-          </Text>
-          <Pressable onPress={() => setShowReservoir(false)} style={({ pressed }) => [styles.outlineAction, pressed && styles.pressed]}>
-            <Text style={styles.outlineActionText}>J'ai compris</Text>
-          </Pressable>
-        </View>
-      ) : null}
+            );
+          })
+        )}
 
-      <View style={[styles.alertCard, styles.successCard]}>
-        <View style={styles.alertHeader}>
-          <View style={styles.alertTitleGroup}>
-            <View style={[styles.iconCircle, styles.successIcon]}>
-              <MaterialIcons name="check-circle" size={27} color={colors.primary} />
+          <ImageBackground source={{ uri: adviceImage }} style={styles.adviceCard} imageStyle={styles.adviceImage}>
+            <View style={styles.adviceShade} />
+            <View style={styles.adviceCopy}>
+              <Text style={styles.adviceLabel}>Conseil Expert</Text>
+              <Text style={styles.adviceText}>{conseil}</Text>
             </View>
-            <View style={styles.alertTitleText}>
-              <Text style={[styles.alertTitle, { color: colors.primary }]}>Arrosage automatique effectué</Text>
-              <Text style={styles.meta}>Parcelle Est • Ce matin, 06:15</Text>
-            </View>
-          </View>
-        </View>
-        <View style={styles.statsBox}>
-          <View style={[styles.statCell, styles.statDivider]}>
-            <Text style={styles.statLabel}>Durée</Text>
-            <Text style={styles.statValue}>45 min</Text>
-          </View>
-          <View style={styles.statCell}>
-            <Text style={styles.statLabel}>Volume</Text>
-            <Text style={styles.statValue}>1200L</Text>
-          </View>
-        </View>
-      </View>
-
-      <ImageBackground source={{ uri: adviceImage }} style={styles.adviceCard} imageStyle={styles.adviceImage}>
-        <View style={styles.adviceShade} />
-        <View style={styles.adviceCopy}>
-          <Text style={styles.adviceLabel}>Conseil Expert</Text>
-          <Text style={styles.adviceText}>L'arrosage matinal réduit l'évaporation de 30%.</Text>
-        </View>
-      </ImageBackground>
+          </ImageBackground>
+      </ScrollView>
     </Screen>
   );
 }
@@ -142,7 +162,7 @@ const styles = StyleSheet.create({
   },
   dangerCard: { borderLeftColor: colors.error, shadowColor: colors.error },
   warningCard: { borderLeftColor: colors.secondary, shadowColor: colors.secondary },
-  successCard: { borderLeftColor: colors.onPrimaryFixedVariant },
+  successCard: { borderLeftColor: colors.onPrimary },
   alertHeader: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 10 },
   alertTitleGroup: { flex: 1, minWidth: 0, flexDirection: "row", gap: spacing.stackSm, alignItems: "flex-start" },
   iconCircle: { width: 50, height: 50, borderRadius: radius.full, alignItems: "center", justifyContent: "center" },
@@ -151,7 +171,7 @@ const styles = StyleSheet.create({
   successIcon: { backgroundColor: colors.primaryFixed },
   alertTitleText: { flex: 1, minWidth: 0 },
   alertTitle: { ...type.h2, fontFamily: fonts.heading },
-  meta: { ...type.labelSm, fontFamily: fonts.body, color: colors.outline, marginTop: 2 },
+  meta: { ...type.labelSm, fontFamily: fonts.body, color: "#5c6b5e", marginTop: 2 }, // Gris-vert foncé, lisible sur fond blanc
   urgentPill: { borderRadius: radius.full, backgroundColor: colors.error, paddingHorizontal: 10, paddingVertical: 5 },
   urgentText: { ...type.labelSm, fontFamily: fonts.body, color: colors.onError },
   message: { ...type.body, fontFamily: fonts.body, color: colors.onSurfaceVariant, marginTop: spacing.gutter },

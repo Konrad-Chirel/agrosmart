@@ -1,0 +1,120 @@
+import json
+import os
+
+transcript_path = r'C:\Users\kevin\.gemini\antigravity\brain\211f90ed-d090-4546-9a54-a15cca45f2ba\.system_generated\logs\transcript_full.jsonl'
+target_timestamp = "2026-06-29T08:53:00Z"
+
+file_actions = {}
+
+with open(transcript_path, 'r', encoding='utf-8') as f:
+    for line in f:
+        try:
+            d = json.loads(line)
+            if d.get('type') == 'PLANNER_RESPONSE':
+                timestamp = d.get('created_at', '')
+                tool_calls = d.get('tool_calls', [])
+                for call in tool_calls:
+                    name = call.get('name')
+                    if name in ['replace_file_content', 'write_to_file', 'multi_replace_file_content']:
+                        args = call.get('args', {})
+                        file_path = args.get('TargetFile')
+                        if file_path:
+                            # Normalize path to handle slashes correctly
+                            norm_path = os.path.normpath(file_path)
+                            if norm_path not in file_actions:
+                                file_actions[norm_path] = []
+                            file_actions[norm_path].append({
+                                'name': name,
+                                'args': args,
+                                'timestamp': timestamp
+                            })
+        except Exception:
+            pass
+
+print(f"Tracking {len(file_actions)} modified files overall.")
+
+for file_path, actions in file_actions.items():
+    actions_after = [a for a in actions if a['timestamp'] > target_timestamp]
+    if not actions_after:
+        continue
+        
+    print(f"\nRestoring: {os.path.basename(file_path)}")
+    
+    actions_before = [a for a in actions if a['timestamp'] <= target_timestamp]
+    
+    last_write_idx = -1
+    for i in range(len(actions_before)-1, -1, -1):
+        if actions_before[i]['name'] == 'write_to_file':
+            last_write_idx = i
+            break
+            
+    if last_write_idx != -1:
+        print("  Using forward reconstruction from last write_to_file.")
+        content = actions_before[last_write_idx]['args'].get('CodeContent', '')
+        success = True
+        for i in range(last_write_idx + 1, len(actions_before)):
+            action = actions_before[i]
+            if action['name'] == 'replace_file_content':
+                target = action['args'].get('TargetContent', '')
+                replacement = action['args'].get('ReplacementContent', '')
+                if target in content:
+                    content = content.replace(target, replacement, 1)
+                else:
+                    print("  Warning: forward replace failed for a chunk.")
+            elif action['name'] == 'multi_replace_file_content':
+                for chunk in action['args'].get('ReplacementChunks', []):
+                    target = chunk.get('TargetContent', '')
+                    replacement = chunk.get('ReplacementContent', '')
+                    if target in content:
+                        content = content.replace(target, replacement, 1)
+                    else:
+                        print("  Warning: forward multi_replace failed for a chunk.")
+        
+        with open(file_path, 'w', encoding='utf-8') as f:
+            f.write(content)
+        print("  -> Success")
+            
+    else:
+        created_after = any(a['name'] == 'write_to_file' for a in actions_after)
+        if created_after and not actions_before:
+            print("  File was created after target timestamp. Renaming to .bak.")
+            if os.path.exists(file_path):
+                os.rename(file_path, file_path + '.bak')
+            continue
+            
+        print("  Using backward reconstruction from current file on disk.")
+        if not os.path.exists(file_path):
+            print("  File doesn't exist on disk.")
+            continue
+            
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+            
+        success = True
+        for action in reversed(actions_after):
+            if action['name'] == 'replace_file_content':
+                target = action['args'].get('ReplacementContent', '')
+                replacement = action['args'].get('TargetContent', '')
+                if target in content:
+                    content = content.replace(target, replacement, 1)
+                else:
+                    success = False
+            elif action['name'] == 'multi_replace_file_content':
+                for chunk in reversed(action['args'].get('ReplacementChunks', [])):
+                    target = chunk.get('ReplacementContent', '')
+                    replacement = chunk.get('TargetContent', '')
+                    if target in content:
+                        content = content.replace(target, replacement, 1)
+                    else:
+                        success = False
+            elif action['name'] == 'write_to_file':
+                # Can't revert past a write_to_file going backward easily unless we accept failure
+                success = False
+                break
+                
+        if success:
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+            print("  -> Success")
+        else:
+            print("  -> Failed to cleanly revert patches backwards. The file might be slightly modified.")

@@ -12,20 +12,37 @@ import type { RootStackParamList } from "../navigation/RootNavigator";
 type Props = NativeStackScreenProps<RootStackParamList, "Profile">;
 
 const cities = ["Cotonou", "Porto-Novo", "Parakou", "Djougou", "Abomey-Calavi", "Bohicon", "Natitingou", "Ouidah"];
-const languages = ["Français", "Fon", "Yoruba"];
 
 export function ProfileScreen({ navigation }: Props) {
-  const { firstName, setFirstName, city, setCity, language, setLanguage, profileImage } = useOnboarding();
+  const {
+    firstName,
+    setFirstName,
+    city,
+    setCity,
+    phone,
+    setPhone,
+    password,
+    setPassword,
+    passwordConfirmation,
+    setPasswordConfirmation,
+    profileImage,
+  } = useOnboarding();
   const [cityOpen, setCityOpen] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [hoveredCity, setHoveredCity] = useState<string | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
-  const nameMissing = submitted && !firstName.trim();
-  const cityMissing = submitted && !city;
+  const nameError = validateFirstName(firstName);
+  const cityError = city ? "" : "Veuillez sélectionner une région valide";
+  const phoneError = validatePhone(phone);
+  const passwordError = validatePassword(password);
+  const confirmError = passwordConfirmation === password ? "" : "Les deux mots de passe ne correspondent pas";
+  const isValid = !nameError && !cityError && !phoneError && !passwordError && !confirmError;
 
   const continueToNextStep = () => {
     setSubmitted(true);
-    if (!firstName.trim() || !city) return;
+    if (!isValid) return;
     navigation.navigate("CultureRegistration");
   };
 
@@ -53,24 +70,24 @@ export function ProfileScreen({ navigation }: Props) {
                 </View>
               </View>
 
-              <Text style={styles.title}>Faisons connaissance 👋</Text>
+              <Text style={styles.title}>Faisons connaissance</Text>
               <Text style={styles.copy}>Personnalisez votre expérience d'arrosage.</Text>
 
               <View style={styles.fieldGroup}>
                 <Text style={styles.fieldLabel}>Prénom</Text>
-                <View style={[styles.inputField, nameMissing && styles.fieldError]}>
+                <View style={[styles.inputField, submitted && nameError && styles.fieldError]}>
                   <MaterialIcons name="person" size={22} color={colors.outline} />
                   <TextInput
                     value={firstName}
                     onChangeText={setFirstName}
                     placeholder="Ex: Koffi"
-                    placeholderTextColor={colors.outline}
+                    placeholderTextColor="#4b5563"
                     autoCapitalize="words"
                     returnKeyType="done"
                     style={[styles.input, styles.webInputReset]}
                   />
                 </View>
-                {nameMissing ? <Text style={styles.errorText}>Veuillez entrer votre prénom.</Text> : null}
+                {submitted && nameError ? <Text style={styles.errorText}>{nameError}</Text> : null}
               </View>
 
               <View style={[styles.fieldGroup, styles.cityBlock]}>
@@ -96,24 +113,78 @@ export function ProfileScreen({ navigation }: Props) {
                   </View>
                 ) : null}
 
-                <Pressable style={[styles.citySelect, cityMissing && styles.fieldError]} onPress={() => setCityOpen((value) => !value)}>
+                <Pressable style={[styles.citySelect, submitted && cityError && styles.fieldError]} onPress={() => setCityOpen((value) => !value)}>
                   <MaterialIcons name="place" size={25} color={colors.outline} />
                   <Text style={[styles.cityValue, !city && styles.placeholderText]}>{city || "Choisir une ville"}</Text>
                   <MaterialIcons name={cityOpen ? "keyboard-arrow-up" : "keyboard-arrow-down"} size={26} color={colors.onSurfaceVariant} />
                 </Pressable>
-                {cityMissing ? <Text style={styles.errorText}>Veuillez choisir une ville.</Text> : null}
+                {submitted && cityError ? <Text style={styles.errorText}>{cityError}</Text> : null}
               </View>
 
-              <Text style={styles.fieldLabel}>Langue de l'application</Text>
-              <View style={styles.segments}>
-                {languages.map((item) => (
-                  <Pressable key={item} onPress={() => setLanguage(item)} style={[styles.segment, language === item && styles.segmentActive]}>
-                    <Text style={[styles.segmentText, language === item && styles.segmentTextActive]}>{item}</Text>
+              <View style={styles.fieldGroup}>
+                <Text style={styles.fieldLabel}>Numéro de téléphone</Text>
+                <View style={[styles.inputField, submitted && phoneError && styles.fieldError]}>
+                  <MaterialIcons name="phone" size={22} color={colors.outline} />
+                  <Text style={{ ...type.bodyLg, fontFamily: fonts.body, color: colors.onSurface }}>+229</Text>
+                  <TextInput
+                    value={phone}
+                    onChangeText={setPhone}
+                    placeholder="0153801870"
+                    placeholderTextColor="#4b5563"
+                    keyboardType="numeric"
+                    maxLength={10}
+                    returnKeyType="done"
+                    style={[styles.input, styles.webInputReset]}
+                  />
+                </View>
+                {submitted && phoneError ? <Text style={styles.errorText}>{phoneError}</Text> : null}
+              </View>
+
+              <View style={styles.fieldGroup}>
+                <Text style={styles.fieldLabel}>Mot de passe</Text>
+                <View style={[styles.inputField, submitted && passwordError && styles.fieldError]}>
+                  <MaterialIcons name="lock" size={22} color={colors.outline} />
+                  <TextInput
+                    value={password}
+                    onChangeText={setPassword}
+                    placeholder="Au moins 6 caractères"
+                    placeholderTextColor="#4b5563"
+                    secureTextEntry={!showPassword}
+                    returnKeyType="done"
+                    style={[styles.input, styles.webInputReset]}
+                  />
+                  <Pressable onPress={() => setShowPassword(!showPassword)}>
+                    <MaterialIcons name={showPassword ? "visibility" : "visibility-off"} size={22} color={colors.outline} />
                   </Pressable>
-                ))}
+                </View>
+                {submitted && passwordError ? <Text style={styles.errorText}>{passwordError}</Text> : null}
               </View>
 
-              <AppButton label="Continuer" icon="arrow-forward" onPress={continueToNextStep} style={{ marginTop: 18 }} />
+              <View style={styles.fieldGroup}>
+                <Text style={styles.fieldLabel}>Confirmation du mot de passe</Text>
+                <View style={[styles.inputField, submitted && confirmError && styles.fieldError]}>
+                  <MaterialIcons name="lock-outline" size={22} color={colors.outline} />
+                  <TextInput
+                    value={passwordConfirmation}
+                    onChangeText={setPasswordConfirmation}
+                    placeholder="Retapez le mot de passe"
+                    placeholderTextColor="#4b5563"
+                    secureTextEntry={!showConfirmPassword}
+                    returnKeyType="done"
+                    style={[styles.input, styles.webInputReset]}
+                  />
+                  <Pressable onPress={() => setShowConfirmPassword(!showConfirmPassword)}>
+                    <MaterialIcons name={showConfirmPassword ? "visibility" : "visibility-off"} size={22} color={colors.outline} />
+                  </Pressable>
+                </View>
+                {submitted && confirmError ? <Text style={styles.errorText}>{confirmError}</Text> : null}
+              </View>
+
+              <AppButton label="Continuer" icon="arrow-forward" onPress={isValid ? continueToNextStep : () => setSubmitted(true)} style={{ marginTop: 18, opacity: isValid ? 1 : 0.45 }} />
+              
+              <Pressable onPress={() => navigation.navigate("Login" as any)} style={{ marginTop: 24, alignItems: "center" }}>
+                <Text style={{ ...type.body, fontFamily: fonts.body, color: colors.primary, textDecorationLine: "underline" }}>Déjà inscrit ? Se connecter</Text>
+              </Pressable>
               <Text style={styles.step}>Étape 2 sur 5</Text>
             </View>
           </ScrollView>
@@ -121,6 +192,29 @@ export function ProfileScreen({ navigation }: Props) {
       </SafeAreaView>
     </ImageBackground>
   );
+}
+
+function validateFirstName(value: string) {
+  const valid = /^\p{L}+(?:[ -]\p{L}+)*$/u.test(value);
+  if (value.length < 2 || value.length > 50 || !valid) {
+    return "Le prénom ne peut contenir que des lettres, un tiret ou un espace entre les lettres";
+  }
+  return "";
+}
+
+function validatePhone(value: string) {
+  const cleaned = value.replace(/\D/g, "");
+  if (cleaned.length !== 10 || !cleaned.startsWith("01")) {
+    return "Veuillez entrer un numéro valide au Bénin (10 chiffres, commençant par 01)";
+  }
+  return "";
+}
+
+function validatePassword(value: string) {
+  if (value.length < 6 || !/\p{L}/u.test(value) || !/\d/.test(value)) {
+    return "Le mot de passe doit contenir au moins 6 caractères dont une lettre et un chiffre";
+  }
+  return "";
 }
 
 const styles = StyleSheet.create({
@@ -205,12 +299,7 @@ const styles = StyleSheet.create({
   },
   cityValue: { ...type.bodyLg, fontFamily: fonts.body, color: colors.onSurface, flex: 1 },
   placeholderText: { color: colors.outline },
-  fieldError: { borderColor: colors.error, backgroundColor: colors.errorContainer },
+  fieldError: { borderColor: colors.error, backgroundColor: "#fff5f5" }, // fond rose très clair pour garder placeholder lisible
   errorText: { ...type.labelSm, fontFamily: fonts.body, color: colors.error, marginTop: 6, paddingLeft: 4 },
-  segments: { flexDirection: "row", padding: 4, backgroundColor: colors.surfaceContainerHigh, borderRadius: radius.full, marginTop: 2 },
-  segment: { flex: 1, alignItems: "center", justifyContent: "center", paddingVertical: 10, borderRadius: radius.full },
-  segmentActive: { backgroundColor: colors.surfaceContainerLowest },
-  segmentText: { ...type.labelSm, fontFamily: fonts.body, color: colors.onSurfaceVariant },
-  segmentTextActive: { color: colors.primary },
   step: { ...type.labelSm, fontFamily: fonts.body, textAlign: "center", color: colors.onSurfaceVariant, marginTop: 16 },
 });

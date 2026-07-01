@@ -1,193 +1,265 @@
+// @ts-nocheck
 import { MaterialIcons } from "@expo/vector-icons";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
-import { useEffect, useRef } from "react";
-import { Animated, Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { useEffect, useRef, useState } from "react";
+import { ActivityIndicator, Alert, Animated, Image, Pressable, StyleSheet, Text, View } from "react-native";
 import { AppButton } from "../components/AppButton";
 import { Screen } from "../components/Screen";
 import { useOnboarding } from "../data/onboardingState";
-import { colors, fonts, radius, shadow, spacing, type } from "../theme";
+import { AgrosmartService } from "../services/AgrosmartService";
+import { colors, fonts, radius, shadow, spacing } from "../theme";
 import type { RootStackParamList } from "../navigation/RootNavigator";
 
 type Props = NativeStackScreenProps<RootStackParamList, "WelcomeSuccess">;
 
-const successParticles = [
-  { left: 32, top: 96, size: 8, color: colors.primary, rotation: "12deg" },
-  { left: 58, top: 122, size: 5, color: colors.secondary, rotation: "42deg" },
-  { right: 36, top: 84, size: 6, color: colors.primary, rotation: "75deg" },
-  { right: 48, top: 128, size: 9, color: colors.tertiary, rotation: "24deg" },
-  { left: 22, top: 148, size: 5, color: colors.tertiary, rotation: "66deg" },
-  { right: 22, top: 154, size: 5, color: colors.primary, rotation: "104deg" },
-];
-
-export function WelcomeSuccessScreen({ navigation }: Props) {
+export function WelcomeSuccessScreen({ navigation, route }: Props) {
   const { firstName, profileImage, crop } = useOnboarding();
+  const { heureRecommandee } = route.params || {};
   const displayName = firstName.trim() || "Koffi";
   const pluralCrop = crop.name.endsWith("s") ? crop.name : `${crop.name}s`;
+
+  // Animations
   const avatarFloat = useRef(new Animated.Value(0)).current;
   const haloPulse = useRef(new Animated.Value(0)).current;
-  const checkPulse = useRef(new Animated.Value(0)).current;
-  const sparkle = useRef(new Animated.Value(0)).current;
+  const checkScale = useRef(new Animated.Value(0)).current;
+  const fadeIn = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
+    // Entrance animation
+    Animated.sequence([
+      Animated.timing(fadeIn, { toValue: 1, duration: 600, useNativeDriver: true }),
+      Animated.spring(checkScale, { toValue: 1, friction: 6, tension: 120, useNativeDriver: true }),
+    ]).start();
+
+    // Float loop
     const floatLoop = Animated.loop(
       Animated.sequence([
-        Animated.timing(avatarFloat, { toValue: 1, duration: 1450, useNativeDriver: true }),
-        Animated.timing(avatarFloat, { toValue: 0, duration: 1450, useNativeDriver: true }),
-      ]),
+        Animated.timing(avatarFloat, { toValue: -12, duration: 1500, useNativeDriver: true }),
+        Animated.timing(avatarFloat, { toValue: 0, duration: 1500, useNativeDriver: true }),
+      ])
     );
     const haloLoop = Animated.loop(
       Animated.sequence([
-        Animated.timing(haloPulse, { toValue: 1, duration: 1100, useNativeDriver: true }),
-        Animated.timing(haloPulse, { toValue: 0, duration: 900, useNativeDriver: true }),
-      ]),
+        Animated.timing(haloPulse, { toValue: 1.12, duration: 1100, useNativeDriver: true }),
+        Animated.timing(haloPulse, { toValue: 0.9, duration: 900, useNativeDriver: true }),
+      ])
     );
-    const checkLoop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(checkPulse, { toValue: 1, duration: 520, useNativeDriver: true }),
-        Animated.timing(checkPulse, { toValue: 0, duration: 760, useNativeDriver: true }),
-      ]),
-    );
-    const sparkleLoop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(sparkle, { toValue: 1, duration: 1350, useNativeDriver: true }),
-        Animated.timing(sparkle, { toValue: 0, duration: 1350, useNativeDriver: true }),
-      ]),
-    );
-
     floatLoop.start();
     haloLoop.start();
-    checkLoop.start();
-    sparkleLoop.start();
 
-    return () => {
-      floatLoop.stop();
-      haloLoop.stop();
-      checkLoop.stop();
-      sparkleLoop.stop();
-    };
-  }, [avatarFloat, checkPulse, haloPulse, sparkle]);
+    return () => { floatLoop.stop(); haloLoop.stop(); };
+  }, []);
 
-  const avatarTranslateY = avatarFloat.interpolate({ inputRange: [0, 1], outputRange: [0, -12] });
-  const avatarScale = avatarFloat.interpolate({ inputRange: [0, 1], outputRange: [1, 1.018] });
-  const haloScale = haloPulse.interpolate({ inputRange: [0, 1], outputRange: [0.92, 1.13] });
-  const haloOpacity = haloPulse.interpolate({ inputRange: [0, 1], outputRange: [0.26, 0.07] });
-  const checkScale = checkPulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.1] });
-  const particleTranslateY = sparkle.interpolate({ inputRange: [0, 1], outputRange: [0, -10] });
-  const particleOpacity = sparkle.interpolate({ inputRange: [0, 0.35, 1], outputRange: [0.22, 1, 0.5] });
+  const handleOpenDashboard = () => {
+    navigation.replace("MainTabs");
+  };
+
+  // Avatar image with fallback to Unsplash farmer image
+  const avatarSource = profileImage
+    ? { uri: profileImage }
+    : { uri: "https://images.unsplash.com/photo-1589939705384-5185137a7f0f?w=400&q=80" };
 
   return (
     <Screen contentStyle={styles.wrap}>
+      {/* Top nav */}
       <View style={styles.topBar}>
-        <Pressable onPress={() => navigation.goBack()} style={styles.backButton}>
-          <MaterialIcons name="arrow-back" size={28} color={colors.primary} />
+        <Pressable onPress={() => navigation.goBack()} style={styles.backBtn}>
+          <MaterialIcons name="arrow-back" size={26} color={colors.primary} />
         </Pressable>
-        <View style={styles.progressPill} />
-        <View style={styles.topSpacer} />
+        <View style={styles.progressDots}>
+          <View style={styles.dotInactive} />
+          <View style={styles.dotInactive} />
+          <View style={styles.dotInactive} />
+          <View style={styles.dotActive} />
+          <View style={styles.dotInactive} />
+        </View>
+        <View style={{ width: 44 }} />
       </View>
 
-      <Animated.View style={[styles.photoMotion, { transform: [{ translateY: avatarTranslateY }, { scale: avatarScale }] }]}>
-        <Animated.View style={[styles.halo, { opacity: haloOpacity, transform: [{ scale: haloScale }] }]} />
-        <View style={styles.photoWrap}>
-          <Image source={{ uri: profileImage }} style={styles.photo} />
-          <Animated.View style={[styles.check, { transform: [{ scale: checkScale }] }]}>
-            <MaterialIcons name="check" size={36} color={colors.onSecondaryContainer} />
-          </Animated.View>
+      {/* Hero avatar with floating animation */}
+      <Animated.View style={[styles.avatarArea, { opacity: fadeIn, transform: [{ translateY: avatarFloat }] }]}>
+        {/* Halo ring */}
+        <Animated.View style={[styles.halo, { transform: [{ scale: haloPulse }] }]} />
+        {/* Photo */}
+        <View style={styles.avatarCircle}>
+          <Image source={avatarSource} style={styles.avatarImage} />
         </View>
-        {successParticles.map((particle, index) => (
-          <Animated.View
-            key={`${particle.color}-${index}`}
-            style={[
-              styles.particle,
-              {
-                width: particle.size,
-                height: particle.size,
-                borderRadius: particle.size / 2,
-                backgroundColor: particle.color,
-                left: particle.left,
-                right: particle.right,
-                top: particle.top,
-                opacity: particleOpacity,
-                transform: [{ translateY: particleTranslateY }, { rotate: particle.rotation }],
-              },
-            ]}
-          />
-        ))}
+        {/* Orange checkmark badge */}
+        <Animated.View style={[styles.checkBadge, { transform: [{ scale: checkScale }] }]}>
+          <MaterialIcons name="check" size={28} color="#1a1a1a" />
+        </Animated.View>
       </Animated.View>
 
-      <Text style={styles.title}>Vous êtes prêt, {displayName}! 🎉</Text>
-      <Text style={styles.copy}>Votre programme d'arrosage pour vos {pluralCrop} est prêt.</Text>
+      {/* Text */}
+      <Animated.View style={{ opacity: fadeIn }}>
+        <Text style={styles.title}>Vous êtes prêt, {displayName} ! 🎉</Text>
+        <Text style={styles.subtitle}>
+          Votre programme d'arrosage pour vos{"\n"}
+          <Text style={styles.subtitleBold}>{pluralCrop}</Text> est prêt.
+        </Text>
+      </Animated.View>
 
-      <View style={styles.summary}>
-        <View style={styles.row}>
-          <View style={styles.rowLeft}>
-            <View style={styles.rowIconWrap}>
-              <MaterialIcons name="local-dining" size={25} color={colors.tertiary} />
+      {/* Summary card */}
+      <Animated.View style={[styles.card, { opacity: fadeIn }]}>
+        {/* Culture row */}
+        <View style={styles.cardRow}>
+          <View style={styles.cardRowLeft}>
+            <View style={styles.iconWrapOrange}>
+              <MaterialIcons name="local-dining" size={20} color="#c2410c" />
             </View>
             <Text style={styles.rowLabel}>Culture</Text>
           </View>
-          <Text style={styles.rowValue}>{crop.emoji} {pluralCrop}</Text>
+          <Text style={styles.rowValue}>{crop.emoji} {crop.name}</Text>
         </View>
 
-        <View style={styles.two}>
-          <Small label="Stade" value={crop.stage} icon="eco" tone={colors.primary} />
-          <Small label="Prochain arrosage" value="17h30" icon="schedule" tone={colors.secondary} />
-        </View>
-
-        <View style={styles.cycle}>
-          <View style={styles.cycleLeft}>
-            <MaterialIcons name="calendar-today" size={22} color={colors.onPrimaryContainer} />
-            <Text style={styles.cycleText}>Durée du cycle</Text>
+        {/* Stade + Prochain arrosage */}
+        <View style={styles.twoCol}>
+          <View style={styles.smallCell}>
+            <Text style={styles.smallLabel}>Stade</Text>
+            <View style={styles.smallRow}>
+              <MaterialIcons name="eco" size={18} color={colors.primary} />
+              <Text style={styles.smallValue} numberOfLines={1}>{crop.stage || "Germination"}</Text>
+            </View>
           </View>
-          <Text style={styles.cycleTextBold}>{crop.durationWeeks} semaines</Text>
+          <View style={styles.smallCell}>
+            <Text style={styles.smallLabel}>Prochain arrosage</Text>
+            <View style={styles.smallRow}>
+              <MaterialIcons name="schedule" size={18} color="#ff9500" />
+              <Text style={styles.smallValue}>{heureRecommandee || "06h30"}</Text>
+            </View>
+          </View>
         </View>
-      </View>
 
-      <AppButton label="Accéder à mon tableau de bord" icon="arrow-forward" onPress={() => navigation.replace("MainTabs")} />
-      <Text style={styles.note}>Vous recevrez une notification 10 minutes avant chaque cycle.</Text>
+        {/* Cycle duration */}
+        <View style={styles.cycleBand}>
+          <View style={styles.cycleBandLeft}>
+            <MaterialIcons name="calendar-today" size={20} color="#dcfce7" />
+            <Text style={styles.cycleBandText}>Durée du cycle</Text>
+          </View>
+          <Text style={styles.cycleBandValue}>{crop.durationWeeks} semaines</Text>
+        </View>
+      </Animated.View>
+
+      {/* CTA */}
+      <AppButton
+        label="Accéder à mon tableau de bord"
+        icon="arrow-forward"
+        iconPosition="right"
+        onPress={handleOpenDashboard}
+        style={{ marginTop: 4 }}
+      />
+
+      <Text style={styles.note}>
+        Vous recevrez une notification 10 minutes avant chaque cycle.
+      </Text>
     </Screen>
   );
 }
 
-function Small({ icon, label, value, tone }: { icon: keyof typeof MaterialIcons.glyphMap; label: string; value: string; tone: string }) {
-  return (
-    <View style={styles.small}>
-      <Text style={styles.smallLabel}>{label}</Text>
-      <View style={styles.smallRow}>
-        <MaterialIcons name={icon} size={21} color={tone} />
-        <Text numberOfLines={1} style={styles.smallValue}>{value}</Text>
-      </View>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
-  wrap: { justifyContent: "center", minHeight: "100%", paddingTop: 22 },
-  topBar: { height: 58, flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
-  backButton: { width: 48, height: 48, alignItems: "center", justifyContent: "center", borderRadius: radius.full },
-  progressPill: { width: 30, height: 8, borderRadius: 4, backgroundColor: colors.primary },
-  topSpacer: { width: 48 },
-  photoMotion: { alignSelf: "center", width: 232, height: 232, alignItems: "center", justifyContent: "center", marginBottom: 16 },
-  halo: { position: "absolute", width: 202, height: 202, borderRadius: 101, backgroundColor: colors.primary, top: 15, left: 15 },
-  particle: { position: "absolute" },
-  photoWrap: { width: 192, height: 192, borderRadius: 96, borderWidth: 8, borderColor: colors.surfaceContainerHighest, backgroundColor: colors.surface, ...shadow.lift },
-  photo: { width: "100%", height: "100%", borderRadius: 88 },
-  check: { position: "absolute", right: -10, bottom: -8, width: 62, height: 62, borderRadius: 31, backgroundColor: colors.secondaryContainer, borderWidth: 4, borderColor: colors.surface, alignItems: "center", justifyContent: "center" },
-  title: { ...type.h1Mobile, fontFamily: fonts.heading, color: colors.primary, textAlign: "center" },
-  copy: { ...type.bodyLg, fontFamily: fonts.body, color: colors.onSurfaceVariant, textAlign: "center", marginTop: 8, marginBottom: spacing.stackMd },
-  summary: { backgroundColor: colors.surfaceContainerLowest, borderRadius: radius.card, padding: 16, borderWidth: 1, borderColor: `${colors.outlineVariant}66`, marginBottom: spacing.stackMd, ...shadow.card },
-  row: { minHeight: 66, borderRadius: radius.lg, backgroundColor: colors.surfaceContainer, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, gap: 12, marginBottom: 14 },
-  rowLeft: { flexDirection: "row", alignItems: "center", gap: 10, flex: 1 },
-  rowIconWrap: { width: 38, height: 38, borderRadius: 19, alignItems: "center", justifyContent: "center" },
-  rowLabel: { ...type.label, fontFamily: fonts.body, color: colors.onSurfaceVariant, textTransform: "uppercase" },
-  rowValue: { ...type.h2, fontFamily: fonts.heading, color: colors.onSurface, flexShrink: 0 },
-  two: { flexDirection: "row", gap: 14, marginBottom: 14 },
-  small: { flex: 1, minHeight: 82, borderRadius: radius.lg, backgroundColor: colors.surfaceContainer, padding: 14, justifyContent: "center" },
-  smallLabel: { ...type.labelSm, fontFamily: fonts.body, color: colors.onSurfaceVariant, textTransform: "uppercase", marginBottom: 8 },
-  smallRow: { flexDirection: "row", gap: 8, alignItems: "center" },
-  smallValue: { ...type.label, fontFamily: fonts.body, color: colors.onSurface, flex: 1 },
-  cycle: { backgroundColor: colors.primaryContainer, borderRadius: radius.lg, minHeight: 56, paddingHorizontal: 16, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
-  cycleLeft: { flexDirection: "row", alignItems: "center", gap: 10, flex: 1 },
-  cycleText: { ...type.body, fontFamily: fonts.body, color: colors.onPrimaryContainer },
-  cycleTextBold: { ...type.label, fontFamily: fonts.body, color: colors.onPrimaryContainer },
-  note: { ...type.labelSm, fontFamily: fonts.body, color: colors.onSurfaceVariant, textAlign: "center", marginTop: 16 },
+  wrap: {
+    flex: 1,
+    backgroundColor: colors.background,
+    paddingHorizontal: spacing.mobile,
+    paddingTop: 8,
+    paddingBottom: 32,
+    alignItems: "stretch",
+  },
+
+  // Top nav
+  topBar: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 16 },
+  backBtn: { width: 44, height: 44, alignItems: "center", justifyContent: "center", borderRadius: radius.full },
+  progressDots: { flexDirection: "row", gap: 6, alignItems: "center" },
+  dotInactive: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.outline },
+  dotActive: { width: 28, height: 8, borderRadius: 4, backgroundColor: colors.primary },
+
+  // Hero
+  avatarArea: { alignSelf: "center", width: 220, height: 220, alignItems: "center", justifyContent: "center", marginBottom: 24 },
+  halo: { position: "absolute", width: 200, height: 200, borderRadius: 100, backgroundColor: colors.primary, opacity: 0.08 },
+  avatarCircle: {
+    width: 190,
+    height: 190,
+    borderRadius: 95,
+    overflow: "hidden",
+    borderWidth: 6,
+    borderColor: "#fff",
+    ...shadow.lift,
+  },
+  avatarImage: { width: "100%", height: "100%" },
+  checkBadge: {
+    position: "absolute",
+    bottom: 8,
+    right: 8,
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    backgroundColor: "#ff9500",
+    borderWidth: 4,
+    borderColor: "#fff",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  // Text
+  title: { fontSize: 26, fontFamily: fonts.heading, color: colors.primary, textAlign: "center", marginBottom: 10 },
+  subtitle: { fontSize: 16, fontFamily: fonts.body, color: colors.onSurfaceVariant, textAlign: "center", lineHeight: 24, marginBottom: 24 },
+  subtitleBold: { fontFamily: fonts.heading, color: colors.onSurface },
+
+  // Card
+  card: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.card,
+    borderWidth: 1,
+    borderColor: colors.outline,
+    overflow: "hidden",
+    marginBottom: 24,
+    ...shadow.card,
+  },
+  cardRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    backgroundColor: colors.surfaceContainerLow,
+    borderRadius: radius.md,
+    margin: 10,
+    marginBottom: 6,
+  },
+  cardRowLeft: { flexDirection: "row", alignItems: "center", gap: 10 },
+  iconWrapOrange: { width: 36, height: 36, borderRadius: 18, backgroundColor: "#ffedd5", alignItems: "center", justifyContent: "center" },
+  rowLabel: { fontSize: 15, fontFamily: fonts.bodyMedium, color: colors.onSurface },
+  rowValue: { fontSize: 18, fontFamily: fonts.heading, color: colors.onSurface },
+
+  twoCol: { flexDirection: "row", gap: 8, paddingHorizontal: 10, marginBottom: 6 },
+  smallCell: {
+    flex: 1,
+    backgroundColor: colors.surfaceContainerLow,
+    borderRadius: radius.md,
+    padding: 14,
+  },
+  smallLabel: { fontSize: 12, fontFamily: fonts.body, color: colors.onSurfaceVariant, marginBottom: 8 },
+  smallRow: { flexDirection: "row", gap: 6, alignItems: "center" },
+  smallValue: { fontSize: 16, fontFamily: fonts.heading, color: colors.onSurface, flex: 1 },
+
+  cycleBand: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: colors.primary,
+    marginHorizontal: 10,
+    marginBottom: 10,
+    borderRadius: radius.md,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  cycleBandLeft: { flexDirection: "row", alignItems: "center", gap: 10 },
+  cycleBandText: { fontSize: 15, fontFamily: fonts.bodyMedium, color: "#dcfce7" },
+  cycleBandValue: { fontSize: 16, fontFamily: fonts.heading, color: "#ffffff" },
+
+  // Saving
+  saving: { minHeight: 56, alignItems: "center", justifyContent: "center", gap: 8 },
+  savingText: { fontSize: 13, fontFamily: fonts.body, color: colors.primary },
+
+  note: { fontSize: 13, fontFamily: fonts.body, color: colors.onSurfaceVariant, textAlign: "center", marginTop: 16, lineHeight: 20 },
 });

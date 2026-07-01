@@ -38,3 +38,7 @@ Thumbs.db
 *.zip
 *.mp4
 Nouveau Document texte.txt
+backend_spec_extracted.txt
+frontend_backup_*/
+agrosmart/
+frontend/.expo-android-check/

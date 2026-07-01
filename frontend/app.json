@@ -21,6 +21,10 @@
     },
     "web": {
       "bundler": "metro"
-    }
+    },
+    "jsEngine": "hermes",
+    "plugins": [
+      "@react-native-community/datetimepicker"
+    ]
   }
 }

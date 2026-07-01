@@ -1,238 +1,307 @@
 import { MaterialIcons } from "@expo/vector-icons";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
-import { useState } from "react";
-import { Image, ImageBackground, Pressable, StyleSheet, Text, View } from "react-native";
-import { Screen } from "../components/Screen";
+import { useEffect, useMemo, useState } from "react";
+import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { useOnboarding } from "../data/onboardingState";
-import { colors, fonts, radius, shadow, spacing, type } from "../theme";
 import type { RootStackParamList } from "../navigation/RootNavigator";
+import { AgrosmartService } from "../services/AgrosmartService";
+import { colors, fonts, radius, shadow, spacing, type } from "../theme";
 
 type Props = NativeStackScreenProps<RootStackParamList, "WeeklySchedule">;
-type FilterValue = "all" | "water" | "fertilize" | "maintenance";
-type ScheduleEvent = {
-  category: FilterValue;
-  icon: keyof typeof MaterialIcons.glyphMap;
-  tone: string;
-  bg: string;
-  title: string;
-  status?: string;
-  statusTone?: string;
-  statusBg?: string;
-  place: string;
-  detail: string;
-  muted?: boolean;
-  editable?: boolean;
-  danger?: boolean;
-};
-type ScheduleDay = {
+
+type CalendarItem = {
   date: string;
-  title: string;
-  meta: string;
-  active?: boolean;
-  events: ScheduleEvent[];
+  jour: string;
+  heure: string;
+  type: string;
+  titre: string;
+  description: string;
+  volume_litres: number;
+  stade?: string;
+  source?: string;
 };
 
-const gardenImage =
-  "https://lh3.googleusercontent.com/aida-public/AB6AXuDamhi4yVa6U_b-MZX7JYU4F7QUbG9SzYIXjLY9lqH7w83xrlIrMAnF2otsEUTGO6yzjvJqWP9AqBtn4Ov5KfNlkLlTYHAp8joaO_GqOQsRbjUjA08HgRh54dFkwFpzntk4ECLutI7K4i-Si2rEYpzn_WSZIcZk-lQVNr_QccoAl1B8JSLSS-td5Vcv7FGrfequjwgBw_xGkCsuIjzYx-iiD8jgkkgVgY7M_-y2-eMnLT90or5htkpHlNSMLMSbEdhRx_88wa0PdMcI";
+type CultureSchedule = {
+  nom: string;
+  stade: string;
+  calendrier_arrosage: CalendarItem[];
+};
 
-const filters: { label: string; value: FilterValue; icon?: keyof typeof MaterialIcons.glyphMap }[] = [
-  { label: "Tout voir", value: "all" },
-  { label: "Arrosage", value: "water", icon: "water-drop" },
-  { label: "Fertilisation", value: "fertilize", icon: "eco" },
-  { label: "Maintenance", value: "maintenance", icon: "build" },
-];
-
-const days: ScheduleDay[] = [
-  {
-    date: "12",
-    title: "Lundi, 12 Juin",
-    meta: "AUJOURD'HUI • 3 ÉVÉNEMENTS",
-    active: true,
-    events: [
-      { category: "water" as FilterValue, icon: "water-drop" as const, tone: "#2563eb", bg: "#eff6ff", title: "Arrosage automatique", status: "TERMINÉ", statusTone: colors.onPrimary, statusBg: colors.primaryContainer, place: "Zone A: Tomates & Poivrons", detail: "06:00 - 06:45 • 450L" },
-      { category: "maintenance" as FilterValue, icon: "build" as const, tone: colors.secondaryContainer, bg: "#fff7ed", title: "Nettoyage des buses", status: "EN COURS", statusTone: colors.onSecondaryContainer, statusBg: colors.secondaryContainer, place: "Secteur Nord-Est • Filtres secondaires", detail: "09:30 - 10:30" },
-      { category: "fertilize" as FilterValue, icon: "eco" as const, tone: colors.primary, bg: colors.primaryFixed, title: "Fertigation N-P-K", status: "À VENIR", statusTone: colors.onSurfaceVariant, statusBg: colors.surfaceContainerHighest, place: "Zone C: Verger d'agrumes", detail: "17:00 • Dosage Bio-12", muted: true },
-    ],
-  },
-  {
-    date: "13",
-    title: "Mardi, 13 Juin",
-    meta: "DEMAIN • 1 ÉVÉNEMENT",
-    events: [{ category: "water" as FilterValue, icon: "water-drop" as const, tone: "#2563eb", bg: "#eff6ff", title: "Arrosage matinal", place: "Zone B: Maïs doux", detail: "05:30 - 06:15", editable: true }],
-  },
-  {
-    date: "14",
-    title: "Mercredi, 14 Juin",
-    meta: "2 ÉVÉNEMENTS",
-    events: [
-      { category: "water" as FilterValue, icon: "water-drop" as const, tone: "#2563eb", bg: "#eff6ff", title: "Arrosage Zone A", place: "Tomates & Poivrons", detail: "06:00" },
-      { category: "maintenance" as FilterValue, icon: "warning" as const, tone: colors.error, bg: colors.errorContainer, title: "Révision Pompe Solaire", place: "Inspection trimestrielle requise", detail: "Priorité Haute", danger: true },
-    ],
-  },
-];
-
-export function WeeklyScheduleScreen({ navigation }: Props) {
+export function WeeklyScheduleScreen({ navigation, route }: Props) {
   const { profileImage } = useOnboarding();
-  const [selectedFilter, setSelectedFilter] = useState<FilterValue>("all");
-  const filteredDays = days
-    .map((day) => ({ ...day, events: selectedFilter === "all" ? day.events : day.events.filter((event) => event.category === selectedFilter) }))
-    .filter((day) => day.events.length > 0);
+  const [culture, setCulture] = useState<CultureSchedule | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [filter, setFilter] = useState("tout");
+
+  const load = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      let cid = route.params?.cultureId;
+      if (!cid) {
+        const cultures = await AgrosmartService.getCultures();
+        if (cultures && cultures.length > 0) {
+          cid = cultures[0].id;
+        }
+      }
+
+      if (!cid) {
+        setError("Aucune culture enregistrée pour générer un programme.");
+        setLoading(false);
+        return;
+      }
+
+      const data = await AgrosmartService.getCulture(cid);
+      setCulture(data);
+    } catch {
+      setError("Impossible de charger le programme.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    load();
+  }, [route.params?.cultureId]);
+
+  const visibleEvents = useMemo(() => {
+    const events = culture?.calendrier_arrosage || [];
+    if (filter === "arrosage") return events.filter((event) => event.type !== "entretien");
+    if (filter === "fertilisation") return events.filter((event) => event.type === "fertilisation");
+    if (filter === "maintenance") return events.filter((event) => event.type === "entretien");
+    return events;
+  }, [culture?.calendrier_arrosage, filter]);
+
+  const grouped = useMemo(() => groupByDate(visibleEvents), [visibleEvents]);
 
   return (
-    <Screen contentStyle={styles.screen}>
-      <View style={styles.header}>
-        <Pressable onPress={() => navigation.goBack()} style={styles.backButton} hitSlop={10}>
-          <MaterialIcons name="arrow-back" size={26} color={colors.onSurface} />
-        </Pressable>
-        <Text style={styles.headerTitle} numberOfLines={1}>Programme Hebdomadaire</Text>
-        <Image source={{ uri: profileImage }} style={styles.avatar} />
-      </View>
-
-      <View style={styles.filters}>
-        {filters.map((filter) => {
-          const active = selectedFilter === filter.value;
-          return (
-            <Pressable key={filter.value} onPress={() => setSelectedFilter(filter.value)} style={({ pressed }) => [styles.filterPill, active && styles.filterPillActive, pressed && styles.pressed]}>
-              {filter.icon ? <MaterialIcons name={filter.icon} size={18} color={active ? colors.onSecondaryContainer : colors.onSurfaceVariant} /> : null}
-              <Text style={[styles.filterText, active && styles.filterTextActive]}>{filter.label}</Text>
-            </Pressable>
-          );
-        })}
-      </View>
-
-      <View style={styles.timeline}>
-        {filteredDays.map((day, index) => (
-          <DaySection key={day.date} {...day} last={index === filteredDays.length - 1} />
-        ))}
-      </View>
-
-      <Pressable style={({ pressed }) => [styles.moreDaysRow, pressed && styles.pressed]}>
-        <View style={styles.moreDaysCopy}>
-          <MaterialIcons name="calendar-month" size={24} color={colors.outline} />
-          <Text style={styles.moreDaysText}>Afficher les jours restants (15-18 Juin)</Text>
+    <SafeAreaView style={styles.safe}>
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
+        <View style={styles.header}>
+          <Pressable onPress={() => navigation.goBack()} style={styles.headerButton} hitSlop={10}>
+            <MaterialIcons name="arrow-back" size={28} color={colors.onSurface} />
+          </Pressable>
+          <Text style={styles.headerTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>Programme Hebdomadaire</Text>
+          <Image source={{ uri: profileImage }} style={styles.avatar} />
         </View>
-        <MaterialIcons name="chevron-right" size={24} color={colors.outline} />
-      </Pressable>
 
-      <ImageBackground source={{ uri: gardenImage }} style={styles.imageCard} imageStyle={styles.imageCardImage}>
-        <View style={styles.imageShade} />
-        <View style={styles.imageCopy}>
-          <Text style={styles.imageTitle}>Prévisions favorables</Text>
-          <Text style={styles.imageText}>Faible probabilité de pluie, maintenez le programme d'arrosage.</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filters} contentContainerStyle={styles.filtersContent}>
+          <FilterPill label="Tout voir" active={filter === "tout"} onPress={() => setFilter("tout")} />
+          <FilterPill icon="water-drop" label="Arrosage" active={filter === "arrosage"} onPress={() => setFilter("arrosage")} />
+          <FilterPill icon="eco" label="Fertilisation" active={filter === "fertilisation"} onPress={() => setFilter("fertilisation")} />
+          <FilterPill icon="build" label="Maintenance" active={filter === "maintenance"} onPress={() => setFilter("maintenance")} />
+        </ScrollView>
+
+        {loading ? (
+          <StateBox text="Chargement du programme..." />
+        ) : error || !culture ? (
+          <Pressable onPress={load}>
+            <StateBox text={`${error || "Programme introuvable."} Touchez pour réessayer.`} />
+          </Pressable>
+        ) : grouped.length === 0 ? (
+          <View style={styles.emptyCard}>
+            <MaterialIcons name="event-busy" size={34} color={colors.primary} />
+            <Text style={styles.emptyTitle}>Aucun programme cette semaine</Text>
+            <Text style={styles.emptyText}>Le calendrier sera rempli dès qu'une décision d'arrosage sera disponible.</Text>
+          </View>
+        ) : (
+          <View style={styles.timeline}>
+            {grouped.map((day, index) => (
+              <DaySection key={day.date} {...day} last={index === grouped.length - 1} />
+            ))}
+          </View>
+        )}
+
+        <View style={styles.imageCard}>
+          <Image
+            source={{ uri: "https://images.unsplash.com/photo-1500382017468-9049fed747ef?q=80&w=1200&auto=format&fit=crop" }}
+            style={styles.image}
+          />
+          <View style={styles.imageOverlay}>
+            <Text style={styles.imageTitle}>Prévisions favorables</Text>
+            <Text style={styles.imageCopy}>Le programme reste adapté au stade de votre culture.</Text>
+          </View>
+          <Pressable style={styles.imageAdd} onPress={() => navigation.navigate("ManualProgramming")}>
+            <MaterialIcons name="add" size={30} color={colors.onPrimary} />
+          </Pressable>
         </View>
-      </ImageBackground>
-
-      <Pressable style={({ pressed }) => [styles.fab, pressed && styles.pressed]}>
-        <MaterialIcons name="add" size={30} color={colors.onPrimary} />
-      </Pressable>
-    </Screen>
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
-function DaySection({ date, title, meta, active, events, last }: ScheduleDay & { last: boolean }) {
+function FilterPill({ label, icon, active, onPress }: { label: string; icon?: keyof typeof MaterialIcons.glyphMap; active: boolean; onPress: () => void }) {
+  return (
+    <Pressable onPress={onPress} style={[styles.filterPill, active && styles.filterPillActive]}>
+      {icon ? <MaterialIcons name={icon} size={18} color={active ? colors.onSecondaryContainer : colors.onSurfaceVariant} /> : null}
+      <Text style={[styles.filterText, active && styles.filterTextActive]}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function StateBox({ text }: { text: string }) {
+  return (
+    <View style={styles.stateBox}>
+      <ActivityIndicator color={colors.primary} />
+      <Text style={styles.stateText}>{text}</Text>
+    </View>
+  );
+}
+
+function groupByDate(items: CalendarItem[]) {
+  const groups: Array<{ date: string; label: string; events: CalendarItem[] }> = [];
+
+  items.forEach((item) => {
+    const existing = groups.find((group) => group.date === item.date);
+    if (existing) {
+      existing.events.push(item);
+    } else {
+      groups.push({ date: item.date, label: item.jour || formatDayTitle(item.date), events: [item] });
+    }
+  });
+
+  return groups;
+}
+
+function DaySection({ date, label, events, last }: { date: string; label: string; events: CalendarItem[]; last: boolean }) {
+  const dayNumber = getDayNumber(date);
+  const sectionMeta = isToday(date) ? `AUJOURD'HUI • ${events.length} ÉVÉNEMENT${events.length > 1 ? "S" : ""}` : `${events.length} ÉVÉNEMENT${events.length > 1 ? "S" : ""}`;
+
   return (
     <View style={styles.daySection}>
       <View style={styles.dayHeader}>
-        <View style={[styles.dayBubble, active && styles.dayBubbleActive]}>
-          <Text style={[styles.dayDate, active && styles.dayDateActive]}>{date}</Text>
+        <View style={[styles.dayBubble, isToday(date) ? styles.dayBubbleActive : styles.dayBubbleIdle]}>
+          <Text style={[styles.dayNumber, !isToday(date) && styles.dayNumberIdle]}>{dayNumber}</Text>
         </View>
-        <View style={styles.dayTitleWrap}>
-          <Text style={styles.dayTitle}>{title}</Text>
-          <Text style={[styles.dayMeta, active && styles.dayMetaActive]}>{meta}</Text>
+        <View>
+          <Text style={styles.dayTitle}>{formatDayTitle(date, label)}</Text>
+          <Text style={[styles.dayMeta, !isToday(date) && styles.dayMetaIdle]}>{sectionMeta}</Text>
         </View>
       </View>
-      <View style={styles.eventsWrap}>
+
+      <View style={styles.eventColumn}>
         {!last ? <View style={styles.timelineLine} /> : null}
-        {events.map((event) => <EventCard key={`${date}-${event.title}`} {...event} />)}
+        {events.map((event, index) => (
+          <EventCard key={`${event.date}-${event.heure}-${index}`} event={event} index={index} />
+        ))}
       </View>
     </View>
   );
 }
 
-function EventCard({
-  icon,
-  tone,
-  bg,
-  title,
-  status,
-  statusTone,
-  statusBg,
-  place,
-  detail,
-  muted,
-  editable,
-  danger,
-}: ScheduleEvent) {
+function EventCard({ event, index }: { event: CalendarItem; index: number }) {
+  const style = getEventStyle(event, index);
+  const finished = event.type === "termine" || event.type === "terminé";
+
   return (
-    <Pressable style={({ pressed }) => [styles.eventCard, muted && styles.eventMuted, pressed && styles.pressed]}>
-      <View style={[styles.eventIcon, { backgroundColor: bg }]}>
-        <MaterialIcons name={icon} size={24} color={tone} />
+    <View style={[styles.eventCard, finished && styles.eventCardDone]}>
+      <View style={[styles.eventIcon, { backgroundColor: style.bg }]}>
+        <MaterialIcons name={style.icon} size={25} color={style.color} />
       </View>
-      <View style={styles.eventCopy}>
+      <View style={styles.eventBody}>
         <View style={styles.eventTitleRow}>
-          <Text style={styles.eventTitle} numberOfLines={1}>{title}</Text>
-          {status ? <Text style={[styles.statusPill, { backgroundColor: statusBg, color: statusTone }]} numberOfLines={1}>{status}</Text> : null}
+          <Text style={styles.eventTitle} numberOfLines={1}>{event.titre || "Arrosage automatique"}</Text>
+          {index < 3 ? <Text style={[styles.eventStatus, { backgroundColor: style.pillBg, color: style.pillColor }]}>{style.status}</Text> : null}
         </View>
-        <Text style={styles.eventPlace} numberOfLines={1}>{place}</Text>
-        <View style={styles.eventDetailRow}>
-          <MaterialIcons name={danger ? "priority-high" : "schedule"} size={15} color={danger ? colors.error : colors.outline} />
-          <Text style={[styles.eventDetail, danger && styles.eventDetailDanger]} numberOfLines={1}>{detail}</Text>
+        <Text style={styles.eventDescription} numberOfLines={1}>{event.description || "Programme calculé par le système"}</Text>
+        <View style={styles.eventMetaRow}>
+          <Meta icon="schedule" text={event.heure || "06:00"} />
+          <Meta icon="opacity" text={`${Math.round(Number(event.volume_litres || 0))}L`} />
         </View>
       </View>
-      {editable ? (
-        <View style={styles.editButton}>
-          <MaterialIcons name="edit" size={21} color={colors.primary} />
-        </View>
-      ) : null}
-    </Pressable>
+    </View>
   );
 }
 
+function Meta({ icon, text }: { icon: keyof typeof MaterialIcons.glyphMap; text: string }) {
+  return (
+    <View style={styles.meta}>
+      <MaterialIcons name={icon} size={14} color={colors.outline} />
+      <Text style={styles.metaText}>{text}</Text>
+    </View>
+  );
+}
+
+function getEventStyle(event: CalendarItem, index: number) {
+  if (event.type === "fertilisation") {
+    return { icon: "eco" as const, color: "#166534", bg: "#ecfdf3", pillBg: colors.surfaceContainerHighest, pillColor: colors.onSurfaceVariant, status: "À VENIR" };
+  }
+  if (event.type === "entretien" || event.type === "maintenance") {
+    return { icon: "build" as const, color: "#ea580c", bg: "#fff7ed", pillBg: colors.secondaryContainer, pillColor: colors.onSecondaryContainer, status: "EN COURS" };
+  }
+  if (event.type === "urgent") {
+    return { icon: "warning" as const, color: colors.error, bg: colors.errorContainer, pillBg: colors.errorContainer, pillColor: colors.onErrorContainer, status: "URGENT" };
+  }
+  return { icon: "water-drop" as const, color: "#2563eb", bg: "#eff6ff", pillBg: index === 0 ? colors.primaryContainer : colors.surfaceContainerHighest, pillColor: index === 0 ? colors.onPrimary : colors.onSurfaceVariant, status: index === 0 ? "PLANIFIÉ" : "À VENIR" };
+}
+
+function getDayNumber(date: string) {
+  const parsed = new Date(date);
+  return Number.isNaN(parsed.getTime()) ? "--" : String(parsed.getDate()).padStart(2, "0");
+}
+
+function isToday(date: string) {
+  const parsed = new Date(date);
+  const today = new Date();
+  return parsed.toDateString() === today.toDateString();
+}
+
+function formatDayTitle(date: string, fallback?: string) {
+  const parsed = new Date(date);
+  if (Number.isNaN(parsed.getTime())) return fallback || date;
+  const label = parsed.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
 const styles = StyleSheet.create({
-  screen: { paddingHorizontal: 0, paddingTop: 0, paddingBottom: 26 },
-  header: { minHeight: 64, flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: spacing.mobile, backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: `${colors.outlineVariant}60` },
-  backButton: { width: 34, height: 34, alignItems: "center", justifyContent: "center" },
-  headerTitle: { flex: 1, ...type.h2, fontFamily: fonts.heading, color: colors.primary },
-  avatar: { width: 40, height: 40, borderRadius: radius.full, borderWidth: 2, borderColor: colors.primaryFixed },
-  filters: { flexDirection: "row", flexWrap: "wrap", gap: 8, paddingHorizontal: spacing.mobile, paddingTop: 16, paddingBottom: 20 },
-  filterPill: { minHeight: 38, flexDirection: "row", alignItems: "center", gap: 6, borderRadius: radius.full, backgroundColor: colors.surfaceContainerLowest, borderWidth: 1, borderColor: colors.outlineVariant, paddingHorizontal: 14 },
-  filterPillActive: { backgroundColor: colors.secondaryContainer, borderColor: colors.secondaryContainer },
-  filterText: { ...type.labelSm, fontFamily: fonts.body, color: colors.onSurfaceVariant },
-  filterTextActive: { color: colors.onSecondaryContainer },
-  pressed: { transform: [{ scale: 0.98 }], opacity: 0.9 },
-  timeline: { paddingHorizontal: spacing.mobile, gap: spacing.stackMd },
+  safe: { flex: 1, backgroundColor: colors.surface },
+  scroll: { width: "100%", maxWidth: 430, alignSelf: "center", paddingHorizontal: spacing.mobile, paddingBottom: 40 },
+  header: { height: 64, flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12 },
+  headerButton: { width: 44, height: 44, borderRadius: radius.full, alignItems: "center", justifyContent: "center" },
+  headerTitle: { fontSize: 24, lineHeight: 30, fontFamily: fonts.heading, color: colors.primary, flex: 1, textAlign: "center" },
+  avatar: { width: 42, height: 42, borderRadius: 21, borderWidth: 2, borderColor: colors.primaryFixed },
+  filters: { marginBottom: 22 },
+  filtersContent: { flexDirection: "row", gap: 8, paddingRight: 8 },
+  filterPill: { flexDirection: "row", alignItems: "center", gap: 6, borderRadius: radius.full, backgroundColor: colors.surfaceContainerLowest, borderWidth: 1, borderColor: colors.outlineVariant, paddingHorizontal: 13, paddingVertical: 8 },
+  filterPillActive: { backgroundColor: colors.secondary, borderColor: colors.secondary },
+  filterText: { ...type.labelSm, fontFamily: fonts.body, color: colors.onSurfaceVariant, letterSpacing: 0.6 },
+  filterTextActive: { color: "#ffffff", fontWeight: "700" },
+  stateBox: { minHeight: 220, borderRadius: radius.card, backgroundColor: colors.surfaceContainerLowest, alignItems: "center", justifyContent: "center", gap: 10, padding: 18, ...shadow.card },
+  stateText: { ...type.body, fontFamily: fonts.body, color: colors.onSurfaceVariant, textAlign: "center" },
+  emptyCard: { borderRadius: radius.card, backgroundColor: colors.surfaceContainerLowest, borderWidth: 1, borderColor: colors.outlineVariant, padding: 24, alignItems: "center", gap: 8, ...shadow.card },
+  emptyTitle: { ...type.h2, fontFamily: fonts.heading, color: colors.onSurface, textAlign: "center" },
+  emptyText: { ...type.body, fontFamily: fonts.body, color: colors.onSurfaceVariant, textAlign: "center" },
+  timeline: { gap: spacing.stackLg },
   daySection: { position: "relative" },
-  dayHeader: { flexDirection: "row", alignItems: "center", gap: 14, marginBottom: 12 },
-  dayBubble: { zIndex: 2, width: 42, height: 42, borderRadius: radius.full, backgroundColor: colors.surfaceContainerHighest, alignItems: "center", justifyContent: "center" },
+  dayHeader: { flexDirection: "row", alignItems: "center", gap: 14, marginBottom: 14 },
+  dayBubble: { zIndex: 2, width: 40, height: 40, borderRadius: radius.full, alignItems: "center", justifyContent: "center" },
   dayBubbleActive: { backgroundColor: colors.primary },
-  dayDate: { ...type.label, fontFamily: fonts.heading, color: colors.onSurface },
-  dayDateActive: { color: colors.onPrimary },
-  dayTitleWrap: { flex: 1, minWidth: 0 },
+  dayBubbleIdle: { backgroundColor: colors.surfaceContainerHighest },
+  dayNumber: { ...type.label, fontFamily: fonts.heading, color: colors.onPrimary },
+  dayNumberIdle: { color: colors.onSurface },
   dayTitle: { ...type.h2, fontFamily: fonts.heading, color: colors.onSurface },
-  dayMeta: { ...type.labelSm, fontFamily: fonts.body, color: colors.outline },
-  dayMetaActive: { color: colors.primary },
-  eventsWrap: { marginLeft: 20, paddingLeft: 28, gap: 12, position: "relative" },
-  timelineLine: { position: "absolute", left: 0, top: 0, bottom: -24, width: 2, borderLeftWidth: 2, borderStyle: "dashed", borderLeftColor: colors.outlineVariant },
-  eventCard: { flexDirection: "row", alignItems: "flex-start", gap: 12, borderRadius: radius.xl, backgroundColor: colors.surfaceContainerLowest, borderWidth: 1, borderColor: colors.outlineVariant, padding: 13, ...shadow.card },
-  eventMuted: { opacity: 0.82 },
-  eventIcon: { width: 46, height: 46, borderRadius: radius.full, alignItems: "center", justifyContent: "center" },
-  eventCopy: { flex: 1, minWidth: 0 },
+  dayMeta: { ...type.labelSm, fontFamily: fonts.body, color: colors.primary, letterSpacing: 0.5 },
+  dayMetaIdle: { color: colors.outline },
+  eventColumn: { marginLeft: 20, paddingLeft: 28, gap: 14, position: "relative" },
+  timelineLine: { position: "absolute", left: 0, top: 0, bottom: -38, width: 2, borderLeftWidth: 2, borderStyle: "dashed", borderLeftColor: colors.outlineVariant },
+  eventCard: { flexDirection: "row", alignItems: "flex-start", gap: 14, borderRadius: radius.xl, backgroundColor: colors.surfaceContainerLowest, borderWidth: 1, borderColor: colors.outlineVariant, padding: 14, ...shadow.card },
+  eventCardDone: { opacity: 0.78 },
+  eventIcon: { width: 48, height: 48, borderRadius: radius.full, alignItems: "center", justifyContent: "center" },
+  eventBody: { flex: 1, minWidth: 0 },
   eventTitleRow: { flexDirection: "row", alignItems: "flex-start", gap: 8 },
-  eventTitle: { flex: 1, ...type.label, fontFamily: fonts.heading, color: colors.onSurface },
-  statusPill: { maxWidth: 78, borderRadius: radius.full, paddingHorizontal: 7, paddingVertical: 3, fontSize: 9, lineHeight: 12, fontWeight: "800", overflow: "hidden" },
-  eventPlace: { ...type.labelSm, fontFamily: fonts.body, color: colors.onSurfaceVariant, marginTop: 3 },
-  eventDetailRow: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 8 },
-  eventDetail: { flex: 1, ...type.labelSm, fontFamily: fonts.body, color: colors.outline },
-  eventDetailDanger: { color: colors.error },
-  editButton: { width: 32, height: 32, alignItems: "center", justifyContent: "center" },
-  moreDaysRow: { marginHorizontal: spacing.mobile, marginTop: spacing.stackMd, paddingVertical: 16, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderTopWidth: 1, borderTopColor: colors.outlineVariant, gap: 12 },
-  moreDaysCopy: { flexDirection: "row", alignItems: "center", gap: 12, flex: 1, minWidth: 0 },
-  moreDaysText: { flex: 1, ...type.label, fontFamily: fonts.heading, color: colors.onSurface },
-  imageCard: { height: 192, marginHorizontal: spacing.mobile, marginTop: 12, borderRadius: radius.xl, overflow: "hidden", justifyContent: "flex-end" },
-  imageCardImage: { borderRadius: radius.xl },
-  imageShade: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,69,13,0.48)" },
-  imageCopy: { padding: 18 },
+  eventTitle: { flex: 1, fontSize: 16, lineHeight: 22, fontWeight: "700", fontFamily: fonts.heading, color: colors.onSurface },
+  eventStatus: { fontSize: 10, lineHeight: 14, fontWeight: "800", fontFamily: fonts.body, overflow: "hidden", borderRadius: radius.full, paddingHorizontal: 8, paddingVertical: 2 },
+  eventDescription: { ...type.labelSm, fontFamily: fonts.body, color: colors.onSurfaceVariant, marginTop: 3 },
+  eventMetaRow: { flexDirection: "row", alignItems: "center", gap: 12, marginTop: 8, flexWrap: "wrap" },
+  meta: { flexDirection: "row", alignItems: "center", gap: 4 },
+  metaText: { ...type.labelSm, fontFamily: fonts.body, color: colors.outline },
+  imageCard: { marginTop: 28, height: 190, borderRadius: radius.card, overflow: "hidden", backgroundColor: colors.primary, ...shadow.card },
+  image: { width: "100%", height: "100%" },
+  imageOverlay: { position: "absolute", left: 0, right: 0, bottom: 0, padding: 18, backgroundColor: `${colors.primary}CC` },
   imageTitle: { ...type.h2, fontFamily: fonts.heading, color: colors.onPrimary },
-  imageText: { ...type.label, fontFamily: fonts.body, color: colors.inverseOnSurface, marginTop: 4 },
-  fab: { alignSelf: "flex-end", width: 56, height: 56, borderRadius: radius.full, backgroundColor: colors.primary, alignItems: "center", justifyContent: "center", marginRight: spacing.mobile, marginTop: spacing.stackMd, ...shadow.lift },
+  imageCopy: { ...type.labelSm, fontFamily: fonts.body, color: "#ffffffcc", marginTop: 3 },
+  imageAdd: { position: "absolute", right: 0, bottom: 0, width: 58, height: 58, borderTopLeftRadius: 30, backgroundColor: colors.primary, alignItems: "center", justifyContent: "center" },
 });

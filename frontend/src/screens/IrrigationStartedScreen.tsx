@@ -4,26 +4,76 @@ import { useEffect, useRef, useState } from "react";
 import { Animated, Image, Pressable, StyleSheet, Text, View } from "react-native";
 import { Screen } from "../components/Screen";
 import { useOnboarding } from "../data/onboardingState";
+import { AgrosmartService } from "../services/AgrosmartService";
 import { colors, fonts, radius, shadow, spacing, type } from "../theme";
 import type { RootStackParamList } from "../navigation/RootNavigator";
 
 type Props = NativeStackScreenProps<RootStackParamList, "IrrigationStarted">;
 
-export function IrrigationStartedScreen({ navigation }: Props) {
+export function IrrigationStartedScreen({ route, navigation }: Props) {
+  const { isScheduled, scheduledLabel, scheduledTimestamp, durationMins, volumeLitres, parcel, passedSecs } = route.params || {} as any;
+  
   const { profileImage } = useOnboarding();
-  const [progress, setProgress] = useState(4);
-  const [secondsLeft, setSecondsLeft] = useState(1725);
+  const [hasStarted, setHasStarted] = useState(!isScheduled);
+  const [secondsLeft, setSecondsLeft] = useState(() => {
+    if (isScheduled && scheduledTimestamp && scheduledTimestamp > Date.now()) {
+      return Math.max(0, Math.floor((scheduledTimestamp - Date.now()) / 1000));
+    }
+    if (durationMins === null || durationMins === undefined) {
+      return passedSecs || 0;
+    }
+    const totalSecs = durationMins * 60;
+    const remaining = totalSecs - (passedSecs || 0);
+    return Math.max(0, remaining);
+  });
+  const [progress, setProgress] = useState(() => {
+    if (!hasStarted || durationMins === null || durationMins === undefined) return 0;
+    const totalSecs = durationMins * 60;
+    const passed = passedSecs || 0;
+    return Math.min(100, (passed / totalSecs) * 100);
+  });
   const pulse = useRef(new Animated.Value(0)).current;
   const bob = useRef(new Animated.Value(0)).current;
 
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setProgress((value) => Math.min(100, value + 0.08));
-      setSecondsLeft((value) => Math.max(0, value - 1));
-    }, 1000);
+  // Ref to track when the timer started exactly, so we can calculate smooth elapsed time
+  const startRef = useRef(Date.now() - (passedSecs ? passedSecs * 1000 : 0));
 
+  useEffect(() => {
+    if (isScheduled && scheduledTimestamp && scheduledTimestamp <= Date.now() && !hasStarted) {
+        setHasStarted(true);
+        startRef.current = Date.now();
+        setSecondsLeft(durationMins === null || durationMins === undefined ? 0 : durationMins * 60);
+    }
+    
+    const timer = setInterval(() => {
+      const now = Date.now();
+      
+      if (durationMins === null || durationMins === undefined) {
+          // Count up
+          const elapsed = Math.floor((now - startRef.current) / 1000);
+          setSecondsLeft(elapsed);
+      } else {
+          // Count down
+          const totalDurationMs = durationMins * 60 * 1000;
+          let remaining = Math.max(0, Math.floor((totalDurationMs - (now - startRef.current)) / 1000));
+          
+          if (remaining === 0 && isScheduled && !hasStarted) {
+              setHasStarted(true);
+              startRef.current = now; // reset start for the actual irrigation
+              remaining = durationMins * 60;
+          }
+          
+          setSecondsLeft(remaining);
+          
+          if (hasStarted) {
+              const p = Math.min(100, ((durationMins * 60 - remaining) / (durationMins * 60)) * 100);
+              setProgress(p);
+          }
+      }
+    }, 1000);
+    
     return () => clearInterval(timer);
-  }, []);
+  }, [isScheduled, scheduledTimestamp, hasStarted, durationMins]);
 
   useEffect(() => {
     const pulseLoop = Animated.loop(
@@ -46,9 +96,42 @@ export function IrrigationStartedScreen({ navigation }: Props) {
     };
   }, [bob, pulse]);
 
-  const minutes = Math.floor(secondsLeft / 60);
+  const isDone = hasStarted && secondsLeft === 0;
+
+  useEffect(() => {
+    if (isDone) {
+      AgrosmartService.stopPump().catch(e => console.log("Erreur auto stop", e));
+    }
+  }, [isDone]);
+
+  const hours = Math.floor(secondsLeft / 3600);
+  const minutes = Math.floor((secondsLeft % 3600) / 60);
   const seconds = secondsLeft % 60;
-  const displayTime = `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
+  let displayTime = `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
+  if (hours > 0) {
+    displayTime = `${hours.toString().padStart(2, "0")}:${displayTime}`;
+  }
+
+  // Dynamic Colors
+  let activeColor = colors.water;
+  let bgOuter = `${colors.water}20`;
+  let bgMiddle = `${colors.water}40`;
+  let bgInner = colors.water;
+  let iconColor = "#ffffff";
+
+  if (!hasStarted) {
+    activeColor = colors.secondary;
+    bgOuter = `${colors.secondary}12`;
+    bgMiddle = `${colors.secondary}20`;
+    bgInner = colors.secondaryContainer;
+    iconColor = colors.onSecondaryContainer;
+  } else if (isDone) {
+    activeColor = colors.primary;
+    bgOuter = `${colors.primary}12`;
+    bgMiddle = `${colors.primary}20`;
+    bgInner = colors.primaryContainer;
+    iconColor = colors.onPrimaryContainer;
+  }
 
   return (
     <Screen contentStyle={styles.screen}>
@@ -68,27 +151,37 @@ export function IrrigationStartedScreen({ navigation }: Props) {
           style={[
             styles.rippleOuter,
             {
-              opacity: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.72, 1] }),
-              transform: [{ scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.96, 1.04] }) }],
+              opacity: isDone ? 1 : pulse.interpolate({ inputRange: [0, 1], outputRange: [0.72, 1] }),
+              transform: [{ scale: isDone ? 1 : pulse.interpolate({ inputRange: [0, 1], outputRange: [0.96, 1.04] }) }],
+              backgroundColor: bgOuter,
             },
           ]}
         >
-          <View style={styles.rippleMiddle}>
+          <View style={[styles.rippleMiddle, { backgroundColor: bgMiddle }]}>
             <Animated.View
               style={[
                 styles.successCircle,
-                { transform: [{ translateY: bob.interpolate({ inputRange: [0, 1], outputRange: [0, -5] }) }] },
+                { 
+                  transform: [{ translateY: isDone ? 0 : bob.interpolate({ inputRange: [0, 1], outputRange: [0, -5] }) }],
+                  backgroundColor: bgInner,
+                },
               ]}
             >
-              <MaterialIcons name="water-drop" size={56} color={colors.onPrimaryContainer} />
+              <MaterialIcons name={!hasStarted ? "schedule" : "water-drop"} size={56} color={iconColor} />
               <View style={styles.checkBadge}>
-                <MaterialIcons name="check" size={24} color={colors.primary} />
+                <MaterialIcons name="check" size={24} color={activeColor} />
               </View>
             </Animated.View>
           </View>
         </Animated.View>
-        <Text style={styles.successTitle}>Arrosage lancé !</Text>
-        <Text style={styles.successCopy}>La pompe est active et distribue l'eau selon vos paramètres.</Text>
+        <Text style={[styles.successTitle, { color: activeColor }]}>
+          {!hasStarted ? "Arrosage programmé !" : isDone ? "Arrosage terminé !" : "Arrosage en cours !"}
+        </Text>
+        <Text style={styles.successCopy}>
+          {!hasStarted 
+            ? "La pompe démarrera automatiquement le moment venu si les conditions météo sont favorables."
+            : isDone ? "L'arrosage s'est déroulé avec succès. La pompe s'est arrêtée automatiquement." : "La pompe est active et distribue l'eau selon vos paramètres."}
+        </Text>
       </View>
 
       <View style={styles.settingsCard}>
@@ -97,27 +190,33 @@ export function IrrigationStartedScreen({ navigation }: Props) {
           <Text style={styles.cardTitle}>Paramètres appliqués</Text>
         </View>
         <View style={styles.settingGrid}>
-          <SettingCell icon="location-on" label="Parcelle" value="Parcelle Nord" />
-          <SettingCell icon="timer" label="Durée" value="30 minutes" />
-          <SettingCell icon="opacity" label="Volume" value="500 Litres" />
+          <SettingCell icon="location-on" label="Parcelle" value={parcel || "Parcelle Nord"} />
+          <SettingCell icon="timer" label="Durée" value={durationMins === null || durationMins === undefined ? "Manuel" : `${durationMins} minutes`} />
+          <SettingCell icon="opacity" label="Volume" value={`${volumeLitres || 500} Litres`} />
         </View>
       </View>
 
       <View style={styles.progressCard}>
         <View style={styles.progressHeader}>
           <View style={styles.pumpState}>
-            <View style={styles.liveDot} />
-            <Text style={styles.pumpText}>PUMP ACTIVE</Text>
+            <View style={[styles.liveDot, { backgroundColor: activeColor }]} />
+            <Text style={[styles.pumpText, { color: activeColor }]}>
+              {!hasStarted ? "EN ATTENTE" : isDone ? "TERMINÉ" : "PUMP ACTIVE"}
+            </Text>
           </View>
           <Text style={styles.timeRemaining} numberOfLines={1}>
-            TEMPS RESTANT: {displayTime}
+            {!hasStarted ? `DÉPART DANS: ${displayTime}` : isDone ? "ÉCOULÉ" : (durationMins === null || durationMins === undefined ? `TEMPS ÉCOULÉ: ${displayTime}` : `TEMPS RESTANT: ${displayTime}`)}
           </Text>
         </View>
         <View style={styles.progressTrack}>
-          <View style={[styles.progressFill, { width: `${progress}%` }]} />
+          <View style={[styles.progressFill, { width: `${progress}%`, backgroundColor: activeColor }]} />
           <View style={styles.flowTexture} />
         </View>
-        <Text style={styles.progressNote}>"L'eau est dirigée vers les capteurs d'humidité de la zone A1"</Text>
+        <Text style={styles.progressNote}>
+          {!hasStarted 
+            ? `Prévu pour : ${scheduledLabel}`
+            : isDone ? "L'eau a été distribuée avec succès." : `"L'eau est dirigée vers les capteurs d'humidité de la parcelle"`}
+        </Text>
       </View>
 
       <View style={styles.actions}>
@@ -125,13 +224,21 @@ export function IrrigationStartedScreen({ navigation }: Props) {
           <MaterialIcons name="dashboard" size={22} color={colors.onPrimary} />
           <Text style={styles.primaryButtonText}>Retour au tableau de bord</Text>
         </Pressable>
-        <Pressable onPress={() => navigation.navigate("MainTabs", { screen: "Dashboard" })} style={({ pressed }) => [styles.stopButton, pressed && styles.buttonPressed]}>
-          <MaterialIcons name="stop-circle" size={22} color={colors.error} />
-          <Text style={styles.stopButtonText}>Arrêter l'arrosage</Text>
-        </Pressable>
+        {hasStarted && !isDone && (
+          <Pressable onPress={async () => {
+            try {
+              await AgrosmartService.stopPump();
+              navigation.navigate("MainTabs", { screen: "Dashboard" });
+            } catch (e) {
+              console.log("Erreur arret", e);
+            }
+          }} style={({ pressed }) => [styles.stopButton, pressed && styles.buttonPressed]}>
+            <MaterialIcons name="stop-circle" size={22} color={colors.error} />
+            <Text style={styles.stopButtonText}>Arrêter l'arrosage</Text>
+          </Pressable>
+        )}
       </View>
 
-      <View style={styles.footerAccent} />
     </Screen>
   );
 }

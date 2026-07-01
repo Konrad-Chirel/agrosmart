@@ -1,31 +1,157 @@
 import { MaterialIcons } from "@expo/vector-icons";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useState } from "react";
-import { Image, ImageBackground, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Image, ImageBackground, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { AppButton } from "../components/AppButton";
 import { images } from "../data/mockData";
 import { useOnboarding } from "../data/onboardingState";
 import { colors, fonts, radius, shadow, spacing, type } from "../theme";
 import type { RootStackParamList } from "../navigation/RootNavigator";
+import { AgrosmartService } from "../services/AgrosmartService";
 
 type Props = NativeStackScreenProps<RootStackParamList, "CultureRegistration">;
 
 const cropTemplates = [
   { name: "Tomate", emoji: "🍅", image: images.tomatoes, stage: "Germination", durationWeeks: 14 },
   { name: "Piment", emoji: "🌶️", image: images.chili, stage: "Croissance", durationWeeks: 12 },
-  { name: "Oignon", emoji: "🧅", image: images.onion, stage: "Bulbaison", durationWeeks: 16 },
+  { name: "Oignon", emoji: "🧅", image: images.onion, stage: "Bulbaison", durationWeeks: 12 },
   { name: "Laitue", emoji: "🥬", image: images.lettuce, stage: "Pré-récolte", durationWeeks: 8 },
-  { name: "Maïs", emoji: "🌽", image: images.corn, stage: "Croissance active", durationWeeks: 18 },
-  { name: "Carotte", emoji: "🥕", image: images.carrot, stage: "Développement racinaire", durationWeeks: 11 },
+  { name: "Maïs", emoji: "🌽", image: images.corn, stage: "Croissance active", durationWeeks: 14 },
+  { name: "Carotte", emoji: "🥕", image: images.carrot, stage: "Développement racinaire", durationWeeks: 12 },
 ];
 
+type FormErrors = {
+  crop?: string;
+  sowingDate?: string;
+  surface?: string;
+};
+
+function parseFrenchDate(value: string) {
+  const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value.trim());
+  if (!match) return null;
+
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  const year = Number(match[3]);
+  const date = new Date(year, month - 1, day);
+
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) {
+    return null;
+  }
+
+  return date;
+}
+
+function validateCultureForm(cropName: string, durationWeeks: number, sowingDate: string, surface: string, surfaceUnit: string): FormErrors {
+  const errors: FormErrors = {};
+
+  if (!cropName) {
+    errors.crop = "Veuillez sélectionner une culture";
+  }
+
+  const parsedDate = parseFrenchDate(sowingDate);
+  if (!parsedDate) {
+    errors.sowingDate = "Veuillez entrer une date de semis valide";
+  } else {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    parsedDate.setHours(0, 0, 0, 0);
+
+    if (parsedDate > today) {
+      errors.sowingDate = "La date de semis ne peut pas être dans le futur";
+    } else {
+      const limit = new Date(today);
+      limit.setDate(limit.getDate() - durationWeeks * 7);
+      if (parsedDate < limit) {
+        errors.sowingDate = `D'après cette date vos ${cropName || "plantes"} seraient déjà récoltées. Veuillez entrer une date de semis correcte.`;
+      }
+    }
+  }
+
+  const surfaceText = surface.trim().replace(",", ".");
+  const surfaceNumber = Number(surfaceText);
+  const surfaceInSquareMeters = surfaceUnit === "ha" ? surfaceNumber * 10000 : surfaceNumber;
+
+  if (!surfaceText || Number.isNaN(surfaceNumber) || !/^\d+(\.\d{1,2})?$/.test(surfaceText)) {
+    errors.surface = "Veuillez entrer une superficie valide";
+  } else if (surfaceInSquareMeters <= 0 || surfaceInSquareMeters < 1) {
+    errors.surface = "La superficie doit être supérieure à 0";
+  } else if (surfaceInSquareMeters > 100000) {
+    errors.surface = "La superficie semble trop grande. Vérifiez la valeur saisie.";
+  }
+
+  return errors;
+}
+
 export function CultureRegistrationScreen({ navigation, route }: Props) {
-  const { crop, setCrop, sowingDate, setSowingDate, surface, setSurface, surfaceUnit, setSurfaceUnit } = useOnboarding();
+  const { firstName, city, phone, password, passwordConfirmation, crop, setCrop, sowingDate, setSowingDate, surface, setSurface, surfaceUnit, setSurfaceUnit } = useOnboarding();
   const mode = route.params?.mode;
   const [selectedIndex, setSelectedIndex] = useState(() => Math.max(0, cropTemplates.findIndex((item) => item.name === crop.name)));
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [unitOpen, setUnitOpen] = useState(false);
+  const [hasSubmitted, setHasSubmitted] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [hardwareModalVisible, setHardwareModalVisible] = useState(false);
+  const [hardwareModalMessage, setHardwareModalMessage] = useState("");
+  const selectedCrop = cropTemplates[selectedIndex];
+  const validationErrors = validateCultureForm(crop.name, selectedCrop?.durationWeeks || 12, sowingDate, surface, surfaceUnit);
+  const canGenerateProgram = Object.keys(validationErrors).length === 0;
+  const visibleErrors = hasSubmitted ? validationErrors : {};
+
+
+  const handleGenerateProgram = async () => {
+    setHasSubmitted(true);
+    if (!canGenerateProgram || isSubmitting) return;
+
+    try {
+      setIsSubmitting(true);
+      setSubmitError(null);
+      if (mode === "addParcel") {
+        await AgrosmartService.addCulture({
+          cropName: crop.name,
+          sowingDate,
+          surface,
+          surfaceUnit
+        });
+      } else {
+        await AgrosmartService.registerAndSetup({
+          firstName,
+          city,
+          phone: phone || "0153801870",
+          password: password || "password123",
+          passwordConfirmation: passwordConfirmation || "password123",
+          cropName: crop.name,
+          sowingDate,
+          surface,
+          surfaceUnit
+        });
+      }
+      if (mode === "addParcel") {
+        navigation.goBack();
+      } else {
+        navigation.navigate("SensorConnection", { mode });
+      }
+    } catch (e: any) {
+      console.error(e);
+      if (e.response?.status === 422) {
+        const errorMsg = e.response?.data?.message || "";
+        if (e.response?.data?.errors?.telephone) {
+          setSubmitError("Un compte est déjà associé à ce numéro de téléphone. Veuillez retourner à l'accueil pour vous connecter.");
+        } else if (errorMsg.toLowerCase().includes("déjà") || errorMsg.toLowerCase().includes("limite")) {
+          setHardwareModalMessage(errorMsg);
+          setHardwareModalVisible(true);
+        } else {
+          setSubmitError(errorMsg || "Données invalides, veuillez vérifier vos saisies.");
+        }
+      } else {
+        setSubmitError("Impossible de se connecter au backend. Vérifiez que Laravel est lancé.");
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   return (
     <ImageBackground source={{ uri: images.splash }} style={styles.bg} blurRadius={12}>
@@ -47,6 +173,7 @@ export function CultureRegistrationScreen({ navigation, route }: Props) {
               <Text style={styles.title}>Quelle culture avez-vous plantée ? 🌱</Text>
               <Text style={styles.copy}>Le système va créer un programme d'arrosage fait pour vous</Text>
 
+              {visibleErrors.crop ? <Text style={styles.errorText}>{visibleErrors.crop}</Text> : null}
               <View style={styles.cropGrid}>
                 {cropTemplates.map((item, index) => {
                   const selected = selectedIndex === index;
@@ -79,8 +206,9 @@ export function CultureRegistrationScreen({ navigation, route }: Props) {
                   <Pressable onPress={() => setCalendarOpen((value) => !value)} style={styles.iconTap}>
                     <MaterialIcons name="calendar-today" size={20} color={colors.onSurface} />
                   </Pressable>
-                  <TextInput value={sowingDate} onChangeText={setSowingDate} placeholder="JJ/MM/AAAA" style={[styles.input, styles.webInputReset]} keyboardType="numbers-and-punctuation" />
+                  <TextInput value={sowingDate} onChangeText={(value) => { setSowingDate(value); setHasSubmitted(false); }} placeholder="JJ/MM/AAAA" placeholderTextColor="#4b5563" style={[styles.input, styles.webInputReset]} keyboardType="numbers-and-punctuation" />
                 </View>
+                {visibleErrors.sowingDate ? <Text style={styles.errorText}>{visibleErrors.sowingDate}</Text> : null}
                 {calendarOpen ? (
                   <View style={styles.calendar}>
                     <View style={styles.calendarHeader}>
@@ -125,7 +253,7 @@ export function CultureRegistrationScreen({ navigation, route }: Props) {
                 <Text style={styles.label}>Superficie</Text>
                 <View style={styles.surfaceRow}>
                   <View style={[styles.inputBox, styles.surfaceInput]}>
-                    <TextInput value={surface} onChangeText={setSurface} keyboardType="decimal-pad" placeholder="0.00" style={[styles.input, styles.surfaceTextInput, styles.webInputReset]} />
+                    <TextInput value={surface} onChangeText={(value) => { setSurface(value); setHasSubmitted(false); }} keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor="#4b5563" style={[styles.input, styles.surfaceTextInput, styles.webInputReset]} />
                   </View>
                   <View style={styles.unitWrap}>
                     <Pressable style={styles.unitSelect} onPress={() => setUnitOpen((value) => !value)}>
@@ -150,15 +278,34 @@ export function CultureRegistrationScreen({ navigation, route }: Props) {
                     ) : null}
                   </View>
                 </View>
+                {visibleErrors.surface ? <Text style={styles.errorText}>{visibleErrors.surface}</Text> : null}
               </View>
 
-              <AppButton label="Générer mon programme" icon="arrow-forward" onPress={() => navigation.navigate("SensorConnection", { mode })} style={styles.cta} />
+                {submitError ? <Text style={[styles.errorText, { textAlign: "center", marginBottom: 10 }]}>{submitError}</Text> : null}
+                <AppButton label={isSubmitting ? "Connexion en cours..." : "Générer mon programme"} icon="arrow-forward" onPress={handleGenerateProgram} style={StyleSheet.flatten([styles.cta, (!canGenerateProgram || isSubmitting) && styles.ctaDisabled])} />
             </View>
 
             <Text style={styles.step}>Étape 3 sur 5</Text>
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>
+
+      <Modal visible={hardwareModalVisible} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalIconWrap}>
+              <MaterialIcons name="memory" size={32} color={colors.primary} />
+            </View>
+            <Text style={styles.modalTitle}>Limite matérielle</Text>
+            <Text style={styles.modalBody}>
+              {hardwareModalMessage}
+              {"\n\n"}
+              Votre boîtier AgroSmart actuel est conçu pour gérer une seule parcelle (1 secteur / 1 électrovanne). Pour ajouter d'autres cultures, vous devez faire évoluer votre installation vers un boîtier multi-secteurs.
+            </Text>
+            <AppButton label="J'ai compris" onPress={() => setHardwareModalVisible(false)} style={styles.modalButton} />
+          </View>
+        </View>
+      </Modal>
     </ImageBackground>
   );
 }
@@ -228,5 +375,13 @@ const styles = StyleSheet.create({
   unitOptionText: { fontSize: 16, lineHeight: 20, fontFamily: fonts.body, color: "#000000" },
   unitOptionTextActive: { color: colors.onPrimary, fontWeight: "800" },
   cta: { marginTop: 0, minHeight: 70, borderRadius: 35 },
+  ctaDisabled: { opacity: 0.45 },
+  errorText: { fontSize: 13, lineHeight: 18, fontWeight: "700", fontFamily: fonts.body, color: "#B3261E", marginTop: 6, marginBottom: 8, paddingLeft: 4 },
   step: { ...type.labelSm, fontFamily: fonts.body, textAlign: "center", color: colors.outline, marginTop: 14, textTransform: "uppercase" },
+  modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "center", alignItems: "center", padding: spacing.mobile, zIndex: 100 },
+  modalContent: { width: "100%", maxWidth: 360, backgroundColor: colors.surfaceContainerLowest, borderRadius: 24, padding: 24, alignItems: "center", ...shadow.lift },
+  modalIconWrap: { width: 64, height: 64, borderRadius: 32, backgroundColor: colors.primaryContainer, alignItems: "center", justifyContent: "center", marginBottom: 16 },
+  modalTitle: { ...type.h2, fontFamily: fonts.heading, color: colors.onSurface, marginBottom: 12, textAlign: "center" },
+  modalBody: { ...type.body, fontFamily: fonts.body, color: colors.onSurfaceVariant, textAlign: "center", marginBottom: 24 },
+  modalButton: { width: "100%", minHeight: 54, borderRadius: radius.full },
 });

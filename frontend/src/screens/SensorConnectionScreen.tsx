@@ -6,6 +6,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { AppButton } from "../components/AppButton";
 import { pairingSensors, images } from "../data/mockData";
 import { useOnboarding } from "../data/onboardingState";
+import { AgrosmartService } from "../services/AgrosmartService";
 import { colors, fonts, radius, shadow, spacing, type } from "../theme";
 import type { RootStackParamList } from "../navigation/RootNavigator";
 
@@ -13,7 +14,10 @@ type Props = NativeStackScreenProps<RootStackParamList, "SensorConnection">;
 
 export function SensorConnectionScreen({ navigation, route }: Props) {
   const { addCurrentCropAsCulture } = useOnboarding();
-  const [pairedIds, setPairedIds] = useState(() => new Set(pairingSensors.filter((sensor) => sensor.paired).map((sensor) => sensor.id)));
+  const [pairedIds, setPairedIds] = useState(() => new Set<string>());
+  const [showSimulation, setShowSimulation] = useState(false);
+  const [statusMessage, setStatusMessage] = useState("Recherche de vos sondes en cours...");
+  const [simulationLoading, setSimulationLoading] = useState(false);
   const mode = route.params?.mode;
   const addedRef = useRef(false);
   const pulseA = useRef(new Animated.Value(0)).current;
@@ -22,7 +26,7 @@ export function SensorConnectionScreen({ navigation, route }: Props) {
   const float = useRef(new Animated.Value(0)).current;
 
   const connectedCount = pairedIds.size;
-  const pairingActive = connectedCount < pairingSensors.length;
+  const pairingActive = connectedCount < pairingSensors.length && !showSimulation;
   const finishAddParcel = useCallback(() => {
     if (addedRef.current) return;
     addedRef.current = true;
@@ -53,25 +57,66 @@ export function SensorConnectionScreen({ navigation, route }: Props) {
   }, [float, pulseA, pulseB, pulseC]);
 
   useEffect(() => {
-    const timers = [
-      setTimeout(() => setPairedIds((prev) => new Set([...prev, "humidity"])), 1100),
-      setTimeout(() => setPairedIds((prev) => new Set([...prev, "sun"])), 2300),
-      setTimeout(() => setPairedIds((prev) => new Set([...prev, "flow"])), 3600),
-    ];
-    return () => timers.forEach(clearTimeout);
+    let cancelled = false;
+
+    const timer = setTimeout(async () => {
+      const status = await AgrosmartService.getSensorConnectionStatus().catch(() => null);
+      if (cancelled) return;
+
+      if (status?.statut === "connecte") {
+        setPairedIds(new Set(pairingSensors.map((sensor) => sensor.id)));
+        setStatusMessage("Vos sondes sont connectées.");
+        setShowSimulation(false);
+        return;
+      }
+
+      setStatusMessage("Vos sondes ne sont pas détectées.");
+      setShowSimulation(true);
+    }, 10000);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, []);
 
-  useEffect(() => {
-    if (mode !== "addParcel" || pairingActive) return undefined;
-
-    const timer = setTimeout(finishAddParcel, 650);
-    return () => clearTimeout(timer);
-  }, [finishAddParcel, mode, pairingActive]);
-
   const buttonLabel = useMemo(
-    () => (pairingActive ? `Recherche en cours... (${connectedCount}/6)` : "Tout est connecté - Continuer"),
-    [connectedCount, pairingActive],
+    () => (showSimulation ? "Sondes non détectées" : pairingActive ? `Recherche en cours... (${connectedCount}/6)` : "Tout est connecté - Continuer"),
+    [connectedCount, pairingActive, showSimulation],
   );
+
+  // Navigation sans attendre backend en mode simulation
+  const handleSimulationSafe = async () => {
+    if (simulationLoading) return;
+    try {
+      setSimulationLoading(true);
+      await AgrosmartService.startSimulationMode().catch(() => null); // ignore si pas de backend
+      addCurrentCropAsCulture();
+      navigation.navigate("MainTabs", { screen: "Dashboard" });
+    } finally {
+      setSimulationLoading(false);
+    }
+  };
+
+  const continueToNextStep = () => {
+    if (mode === "addParcel") {
+      finishAddParcel();
+      return;
+    }
+
+    navigation.navigate("NotificationsIntro");
+  };
+
+  const handleSimulation = async () => {
+    try {
+      setSimulationLoading(true);
+      await AgrosmartService.startSimulationMode();
+      addCurrentCropAsCulture();
+      navigation.navigate("MainTabs", { screen: "Dashboard" });
+    } finally {
+      setSimulationLoading(false);
+    }
+  };
 
   return (
     <ImageBackground source={{ uri: images.splash }} style={styles.bg} blurRadius={12}>
@@ -91,8 +136,8 @@ export function SensorConnectionScreen({ navigation, route }: Props) {
               <View style={styles.topSpacer} />
             </View>
 
-            <Text style={styles.title}>Connectons vos capteurs 📡</Text>
-            <Text style={styles.copy}>Votre système est prêt à surveiller votre champ en temps réel.</Text>
+            <Text style={styles.title}>Connectons vos sondes</Text>
+            <Text style={styles.copy}>{statusMessage}</Text>
 
             <View style={styles.radar}>
               <View style={styles.gridTint} />
@@ -130,7 +175,7 @@ export function SensorConnectionScreen({ navigation, route }: Props) {
                     <Text style={styles.sensorLabel}>{sensor.label}</Text>
                     <View style={[styles.status, paired ? styles.statusOk : styles.statusSync]}>
                       <MaterialIcons name={paired ? "check-circle" : "sync"} size={11} color={paired ? "#047857" : colors.outline} />
-                      <Text style={[styles.statusText, paired && styles.statusTextOk]}>{paired ? "OK" : "Sync"}</Text>
+                      <Text style={[styles.statusText, paired && styles.statusTextOk]}>{paired ? "Connecte" : showSimulation ? "Non detecte" : "Recherche"}</Text>
                     </View>
                   </View>
                 );
@@ -141,17 +186,27 @@ export function SensorConnectionScreen({ navigation, route }: Props) {
               label={buttonLabel}
               icon={pairingActive ? "sync" : "arrow-forward"}
               onPress={() => {
-                if (!pairingActive) {
-                  if (mode === "addParcel") {
-                    finishAddParcel();
-                    return;
-                  }
-
-                  navigation.navigate("NotificationsIntro");
+                if (!pairingActive && !showSimulation) {
+                  continueToNextStep();
                 }
               }}
-              style={pairingActive ? styles.buttonWaiting : styles.button}
+              style={pairingActive || showSimulation ? styles.buttonWaiting : styles.button}
             />
+
+            {showSimulation ? (
+              <View style={styles.simulationBox}>
+                <AppButton
+                  label={simulationLoading ? "Chargement..." : "Continuer en mode simulation"}
+                  icon="arrow-forward"
+                  iconPosition="right"
+                  onPress={handleSimulationSafe}
+                  style={styles.simulationButton}
+                />
+                <Text style={styles.simulationText}>
+                  Vos sondes ne sont pas détectées. Les données seront simulées jusqu'à la connexion de votre prototype.
+                </Text>
+              </View>
+            ) : null}
           </View>
 
           <Text style={styles.step}>Étape 4 sur 5</Text>
@@ -180,19 +235,19 @@ function floatStyle(value: Animated.Value, reverse = false) {
 
 const styles = StyleSheet.create({
   bg: { flex: 1 },
-  overlay: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(247,251,241,0.88)" },
+  overlay: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(10,30,10,0.35)" }, // sombre pour laisser les couleurs respirer
   safe: { flex: 1 },
   scroll: { flexGrow: 1, justifyContent: "center", alignItems: "center", padding: spacing.mobile },
   card: {
     width: "100%",
     maxWidth: 400,
-    backgroundColor: colors.surfaceContainerLowest,
+    backgroundColor: "#ffffff", // Blanc pur, pas de teinte qui lève un voile
     borderRadius: 32,
     paddingHorizontal: 24,
     paddingTop: 22,
     paddingBottom: 24,
     borderWidth: 1,
-    borderColor: `${colors.outlineVariant}44`,
+    borderColor: "#d1d5db",
     ...shadow.lift,
   },
   topBar: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 16 },
@@ -244,15 +299,18 @@ const styles = StyleSheet.create({
     padding: 8,
     ...shadow.card,
   },
-  sensorPending: { opacity: 0.72, transform: [{ scale: 0.96 }] },
+  sensorPending: { opacity: 1 }, // pas de réduction d'opacité qui rendait le texte illisible
   sensorIcon: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center", marginBottom: 6 },
-  sensorLabel: { fontSize: 10, lineHeight: 14, fontWeight: "900", fontFamily: fonts.body, color: colors.onSurface, textTransform: "uppercase" },
+  sensorLabel: { fontSize: 11, lineHeight: 15, fontFamily: fonts.heading, color: "#111827", textTransform: "uppercase" }, // texte foncé toujours visible
   status: { flexDirection: "row", gap: 4, alignItems: "center", borderRadius: radius.full, paddingHorizontal: 7, paddingVertical: 3, marginTop: 6 },
   statusOk: { backgroundColor: "#d1fae5" },
-  statusSync: { backgroundColor: colors.surfaceContainer },
-  statusText: { fontSize: 8, lineHeight: 10, fontWeight: "900", fontFamily: fonts.body, color: colors.outline, textTransform: "uppercase" },
+  statusSync: { backgroundColor: "#f3f4f6" },
+  statusText: { fontSize: 9, lineHeight: 11, fontFamily: fonts.bodyMedium, color: "#6b7280", textTransform: "uppercase" },
   statusTextOk: { color: "#065f46" },
   button: { minHeight: 54 },
-  buttonWaiting: { minHeight: 54, backgroundColor: colors.primaryFixedDim },
+  buttonWaiting: { minHeight: 54, backgroundColor: "#1b5e20" }, // vert foncé quand en attente
+  simulationBox: { marginTop: 14, gap: 10 },
+  simulationButton: { minHeight: 54, backgroundColor: "#ff9500" }, // orange vif, pas de transparence
+  simulationText: { ...type.labelSm, fontFamily: fonts.body, color: "#374151", textAlign: "center", lineHeight: 19 },
   step: { ...type.labelSm, fontFamily: fonts.body, textAlign: "center", color: colors.outline, marginTop: 14, textTransform: "uppercase" },
 });
