@@ -14,67 +14,109 @@ export function IrrigationStartedScreen({ route, navigation }: Props) {
   const { isScheduled, scheduledLabel, scheduledTimestamp, durationMins, volumeLitres, parcel, passedSecs } = route.params || {} as any;
   
   const { profileImage } = useOnboarding();
-  const [hasStarted, setHasStarted] = useState(!isScheduled);
-  const [secondsLeft, setSecondsLeft] = useState(() => {
+
+  // ---- PHASE MANAGEMENT ----
+  // Phase 1: "waiting"  → countdown to scheduledTimestamp (only for scheduled irrigations)
+  // Phase 2: "running"  → countdown of durationMins (or count-up if manual/no duration)
+  // Phase 3: "done"     → irrigation finished
+  const [phase, setPhase] = useState<'waiting' | 'running' | 'done'>(() => {
     if (isScheduled && scheduledTimestamp && scheduledTimestamp > Date.now()) {
+      return 'waiting';
+    }
+    return 'running';
+  });
+
+  const [displaySeconds, setDisplaySeconds] = useState(() => {
+    if (isScheduled && scheduledTimestamp && scheduledTimestamp > Date.now()) {
+      // Phase "waiting": seconds until scheduled start
       return Math.max(0, Math.floor((scheduledTimestamp - Date.now()) / 1000));
     }
     if (durationMins === null || durationMins === undefined) {
+      // Manual mode (count up): start from passed seconds
       return passedSecs || 0;
     }
+    // Running phase: remaining irrigation time
     const totalSecs = durationMins * 60;
-    const remaining = totalSecs - (passedSecs || 0);
-    return Math.max(0, remaining);
+    return Math.max(0, totalSecs - (passedSecs || 0));
   });
+
   const [progress, setProgress] = useState(() => {
-    if (!hasStarted || durationMins === null || durationMins === undefined) return 0;
+    if (phase !== 'running' || durationMins === null || durationMins === undefined) return 0;
     const totalSecs = durationMins * 60;
     const passed = passedSecs || 0;
     return Math.min(100, (passed / totalSecs) * 100);
   });
+
+  const pumpStartTriggered = useRef(false);
+  const irrigationStartTime = useRef(
+    phase === 'running' ? Date.now() - ((passedSecs || 0) * 1000) : 0
+  );
+
   const pulse = useRef(new Animated.Value(0)).current;
   const bob = useRef(new Animated.Value(0)).current;
 
-  // Ref to track when the timer started exactly, so we can calculate smooth elapsed time
-  const startRef = useRef(Date.now() - (passedSecs ? passedSecs * 1000 : 0));
-
+  // ---- MAIN TIMER ----
   useEffect(() => {
-    if (isScheduled && scheduledTimestamp && scheduledTimestamp <= Date.now() && !hasStarted) {
-        setHasStarted(true);
-        startRef.current = Date.now();
-        setSecondsLeft(durationMins === null || durationMins === undefined ? 0 : durationMins * 60);
-    }
-    
     const timer = setInterval(() => {
       const now = Date.now();
-      
-      if (durationMins === null || durationMins === undefined) {
-          // Count up
-          const elapsed = Math.floor((now - startRef.current) / 1000);
-          setSecondsLeft(elapsed);
-      } else {
-          // Count down
-          const totalDurationMs = durationMins * 60 * 1000;
-          let remaining = Math.max(0, Math.floor((totalDurationMs - (now - startRef.current)) / 1000));
-          
-          if (remaining === 0 && isScheduled && !hasStarted) {
-              setHasStarted(true);
-              startRef.current = now; // reset start for the actual irrigation
-              remaining = durationMins * 60;
+
+      if (phase === 'waiting') {
+        // Count down to scheduled start
+        const remaining = Math.max(0, Math.floor((scheduledTimestamp - now) / 1000));
+        setDisplaySeconds(remaining);
+
+        if (remaining === 0) {
+          // Time's up! Transition to running phase
+          setPhase('running');
+          irrigationStartTime.current = now;
+
+          // Actually trigger the pump via API (belt-and-suspenders with backend scheduler)
+          if (!pumpStartTriggered.current) {
+            pumpStartTriggered.current = true;
+            AgrosmartService.startPump(durationMins, volumeLitres).catch(e =>
+              console.log("Auto-start pump error (scheduler will handle):", e)
+            );
           }
-          
-          setSecondsLeft(remaining);
-          
-          if (hasStarted) {
-              const p = Math.min(100, ((durationMins * 60 - remaining) / (durationMins * 60)) * 100);
-              setProgress(p);
+
+          // Set initial irrigation countdown
+          if (durationMins !== null && durationMins !== undefined) {
+            setDisplaySeconds(durationMins * 60);
+          } else {
+            setDisplaySeconds(0);
           }
+        }
+      } else if (phase === 'running') {
+        const elapsed = Math.floor((now - irrigationStartTime.current) / 1000);
+
+        if (durationMins === null || durationMins === undefined) {
+          // Manual mode: count up
+          setDisplaySeconds(elapsed);
+        } else {
+          // Timed mode: count down
+          const totalSecs = durationMins * 60;
+          const remaining = Math.max(0, totalSecs - elapsed);
+          setDisplaySeconds(remaining);
+          setProgress(Math.min(100, (elapsed / totalSecs) * 100));
+
+          if (remaining === 0) {
+            setPhase('done');
+            setProgress(100);
+          }
+        }
       }
     }, 1000);
-    
-    return () => clearInterval(timer);
-  }, [isScheduled, scheduledTimestamp, hasStarted, durationMins]);
 
+    return () => clearInterval(timer);
+  }, [phase, scheduledTimestamp, durationMins, volumeLitres]);
+
+  // Auto-stop pump when done
+  useEffect(() => {
+    if (phase === 'done') {
+      AgrosmartService.stopPump().catch(e => console.log("Erreur auto stop", e));
+    }
+  }, [phase]);
+
+  // ---- ANIMATIONS ----
   useEffect(() => {
     const pulseLoop = Animated.loop(
       Animated.sequence([
@@ -96,42 +138,44 @@ export function IrrigationStartedScreen({ route, navigation }: Props) {
     };
   }, [bob, pulse]);
 
-  const isDone = hasStarted && secondsLeft === 0;
-
-  useEffect(() => {
-    if (isDone) {
-      AgrosmartService.stopPump().catch(e => console.log("Erreur auto stop", e));
-    }
-  }, [isDone]);
-
-  const hours = Math.floor(secondsLeft / 3600);
-  const minutes = Math.floor((secondsLeft % 3600) / 60);
-  const seconds = secondsLeft % 60;
+  // ---- DISPLAY FORMATTING ----
+  const hours = Math.floor(displaySeconds / 3600);
+  const minutes = Math.floor((displaySeconds % 3600) / 60);
+  const seconds = displaySeconds % 60;
   let displayTime = `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
   if (hours > 0) {
     displayTime = `${hours.toString().padStart(2, "0")}:${displayTime}`;
   }
 
-  // Dynamic Colors
+  // Dynamic Colors based on phase
   let activeColor = colors.water;
   let bgOuter = `${colors.water}20`;
   let bgMiddle = `${colors.water}40`;
   let bgInner = colors.water;
   let iconColor = "#ffffff";
 
-  if (!hasStarted) {
+  if (phase === 'waiting') {
     activeColor = colors.secondary;
     bgOuter = `${colors.secondary}12`;
     bgMiddle = `${colors.secondary}20`;
     bgInner = colors.secondaryContainer;
     iconColor = colors.onSecondaryContainer;
-  } else if (isDone) {
+  } else if (phase === 'done') {
     activeColor = colors.primary;
     bgOuter = `${colors.primary}12`;
     bgMiddle = `${colors.primary}20`;
     bgInner = colors.primaryContainer;
     iconColor = colors.onPrimaryContainer;
   }
+
+  const statusLabel = phase === 'waiting' ? "EN ATTENTE" : phase === 'done' ? "TERMINÉ" : "PUMP ACTIVE";
+  const timerLabel = phase === 'waiting'
+    ? `DÉPART DANS: ${displayTime}`
+    : phase === 'done'
+      ? "ÉCOULÉ"
+      : (durationMins === null || durationMins === undefined)
+        ? `TEMPS ÉCOULÉ: ${displayTime}`
+        : `TEMPS RESTANT: ${displayTime}`;
 
   return (
     <Screen contentStyle={styles.screen}>
@@ -151,8 +195,8 @@ export function IrrigationStartedScreen({ route, navigation }: Props) {
           style={[
             styles.rippleOuter,
             {
-              opacity: isDone ? 1 : pulse.interpolate({ inputRange: [0, 1], outputRange: [0.72, 1] }),
-              transform: [{ scale: isDone ? 1 : pulse.interpolate({ inputRange: [0, 1], outputRange: [0.96, 1.04] }) }],
+              opacity: phase === 'done' ? 1 : pulse.interpolate({ inputRange: [0, 1], outputRange: [0.72, 1] }),
+              transform: [{ scale: phase === 'done' ? 1 : pulse.interpolate({ inputRange: [0, 1], outputRange: [0.96, 1.04] }) }],
               backgroundColor: bgOuter,
             },
           ]}
@@ -162,12 +206,12 @@ export function IrrigationStartedScreen({ route, navigation }: Props) {
               style={[
                 styles.successCircle,
                 { 
-                  transform: [{ translateY: isDone ? 0 : bob.interpolate({ inputRange: [0, 1], outputRange: [0, -5] }) }],
+                  transform: [{ translateY: phase === 'done' ? 0 : bob.interpolate({ inputRange: [0, 1], outputRange: [0, -5] }) }],
                   backgroundColor: bgInner,
                 },
               ]}
             >
-              <MaterialIcons name={!hasStarted ? "schedule" : "water-drop"} size={56} color={iconColor} />
+              <MaterialIcons name={phase === 'waiting' ? "schedule" : "water-drop"} size={56} color={iconColor} />
               <View style={styles.checkBadge}>
                 <MaterialIcons name="check" size={24} color={activeColor} />
               </View>
@@ -175,12 +219,12 @@ export function IrrigationStartedScreen({ route, navigation }: Props) {
           </View>
         </Animated.View>
         <Text style={[styles.successTitle, { color: activeColor }]}>
-          {!hasStarted ? "Arrosage programmé !" : isDone ? "Arrosage terminé !" : "Arrosage en cours !"}
+          {phase === 'waiting' ? "Arrosage programmé !" : phase === 'done' ? "Arrosage terminé !" : "Arrosage en cours !"}
         </Text>
         <Text style={styles.successCopy}>
-          {!hasStarted 
+          {phase === 'waiting'
             ? "La pompe démarrera automatiquement le moment venu si les conditions météo sont favorables."
-            : isDone ? "L'arrosage s'est déroulé avec succès. La pompe s'est arrêtée automatiquement." : "La pompe est active et distribue l'eau selon vos paramètres."}
+            : phase === 'done' ? "L'arrosage s'est déroulé avec succès. La pompe s'est arrêtée automatiquement." : "La pompe est active et distribue l'eau selon vos paramètres."}
         </Text>
       </View>
 
@@ -201,11 +245,11 @@ export function IrrigationStartedScreen({ route, navigation }: Props) {
           <View style={styles.pumpState}>
             <View style={[styles.liveDot, { backgroundColor: activeColor }]} />
             <Text style={[styles.pumpText, { color: activeColor }]}>
-              {!hasStarted ? "EN ATTENTE" : isDone ? "TERMINÉ" : "PUMP ACTIVE"}
+              {statusLabel}
             </Text>
           </View>
           <Text style={styles.timeRemaining} numberOfLines={1}>
-            {!hasStarted ? `DÉPART DANS: ${displayTime}` : isDone ? "ÉCOULÉ" : (durationMins === null || durationMins === undefined ? `TEMPS ÉCOULÉ: ${displayTime}` : `TEMPS RESTANT: ${displayTime}`)}
+            {timerLabel}
           </Text>
         </View>
         <View style={styles.progressTrack}>
@@ -213,9 +257,9 @@ export function IrrigationStartedScreen({ route, navigation }: Props) {
           <View style={styles.flowTexture} />
         </View>
         <Text style={styles.progressNote}>
-          {!hasStarted 
-            ? `Prévu pour : ${scheduledLabel}`
-            : isDone ? "L'eau a été distribuée avec succès." : `"L'eau est dirigée vers les capteurs d'humidité de la parcelle"`}
+          {phase === 'waiting'
+            ? `Prévu pour : ${scheduledLabel || ''}`
+            : phase === 'done' ? "L'eau a été distribuée avec succès." : "L'eau est dirigée vers les capteurs d'humidité de la parcelle"}
         </Text>
       </View>
 
@@ -224,7 +268,7 @@ export function IrrigationStartedScreen({ route, navigation }: Props) {
           <MaterialIcons name="dashboard" size={22} color={colors.onPrimary} />
           <Text style={styles.primaryButtonText}>Retour au tableau de bord</Text>
         </Pressable>
-        {hasStarted && !isDone && (
+        {phase === 'running' && (
           <Pressable onPress={async () => {
             try {
               await AgrosmartService.stopPump();

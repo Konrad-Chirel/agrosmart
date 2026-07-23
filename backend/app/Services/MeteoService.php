@@ -213,6 +213,7 @@ class MeteoService
     public function getPluiePrevue(float $lat, float $lon): bool
     {
         return collect(data_get($this->getPrevisionsActuelles($lat, $lon), 'list', []))
+            ->take(8) // Seulement les prochaines 24h (8 tranches de 3h)
             ->contains(fn ($item) => (float) data_get($item, 'pop', 0) >= 0.5 || (float) data_get($item, 'rain.3h', 0) > 0);
     }
 

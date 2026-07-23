@@ -19,15 +19,20 @@ class ExecuterArrosageProgrammeJob implements ShouldQueue
      */
     public function handle(PompeService $pompeService): void
     {
-        $decisions = DecisionArrosage::whereIn('type_decision', ['arrosage_programme', 'arrosage_preventif'])
+        // Fenêtre de déclenchement : on exécute les arrosages programmés dans
+        // les 2 minutes passées (pour rattraper un éventuel léger décalage du scheduler)
+        $now = now();
+        $windowStart = $now->copy()->subMinutes(2);
+
+        $decisions = DecisionArrosage::whereIn('type_decision', ['arrosage_programme', 'arrosage_preventif', 'programme_manuel'])
             ->where('executee', false)
             ->whereNotNull('heure_programmee')
-            ->whereDate('created_at', today())
             ->get()
-            ->filter(function ($decision) {
-                $heure = now()->setTimeFromTimeString((string) $decision->heure_programmee);
-                // On declenche si c'est l'heure exacte (a la minute pres)
-                return $heure->format('H:i') === now()->format('H:i');
+            ->filter(function ($decision) use ($now, $windowStart) {
+                // Carbon::parse gère les formats datetime complets ET les formats HH:MM:SS
+                $heureDecision = \Carbon\Carbon::parse($decision->heure_programmee);
+                // On déclenche si l'heure programmée est dans la fenêtre [now-2min, now]
+                return $heureDecision->between($windowStart, $now);
             });
 
         foreach ($decisions as $decision) {
@@ -49,15 +54,16 @@ class ExecuterArrosageProgrammeJob implements ShouldQueue
             }
 
             $pompeService->demarrer($decision->parcelle_id, max(5, (int) ceil((float) $decision->volume_litres / 20)), (float) $decision->volume_litres);
-            $decision->update(['executee' => true]);
+            $decision->update(['executee' => true, 'raison' => 'Exécuté avec succès']);
+            Log::info("Arrosage {$decision->id} exécuté à l'heure programmée.");
         }
 
         $manuels = ArrosageProgramme::where('statut', 'planifie')
             ->whereDate('date_arrosage', '<=', today())
             ->get()
-            ->filter(function ($programme) {
-                $heure = now()->setTimeFromTimeString((string) $programme->heure_arrosage);
-                return $heure->format('H:i') === now()->format('H:i');
+            ->filter(function ($programme) use ($now, $windowStart) {
+                $heureArrosage = \Carbon\Carbon::parse($programme->heure_arrosage);
+                return $heureArrosage->between($windowStart, $now);
             });
 
         foreach ($manuels as $programme) {

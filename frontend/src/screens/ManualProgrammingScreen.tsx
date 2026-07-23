@@ -205,9 +205,13 @@ export function ManualProgrammingScreen({ navigation }: Props) {
             label="Voir l'état"
             icon="visibility"
             onPress={() => {
+              const ts = activeDecision.heure_programmee ? new Date(activeDecision.heure_programmee.replace(' ', 'T')).getTime() : 0;
               navigation.navigate("IrrigationStarted", {
                 isScheduled: true,
-                scheduledLabel: `Aujourd'hui à ${activeDecision.heure_programmee?.slice(0, 5)}`,
+                scheduledLabel: `Aujourd'hui à ${activeDecision.heure_programmee?.split(' ')[1]?.slice(0, 5) || ""}`,
+                scheduledTimestamp: ts,
+                durationMins: activeDecision.duree_minutes || 30,
+                volumeLitres: activeDecision.volume_litres || 500,
               });
             }}
             style={{ marginTop: 24, width: '100%' }}
@@ -360,8 +364,10 @@ function VolumeSlider({ initialVolume, onChange }: { initialVolume: number, onCh
   const [sliderWidth, setSliderWidth] = useState(1);
   const [volumePercent, setVolumePercent] = useState((initialVolume - 180) / 620);
   const volumeRef = useRef(volumePercent);
+  const sliderWidthRef = useRef(1);
   const volumeLitres = Math.round(180 + volumePercent * 620);
-  const startPercentRef = useRef(0);
+
+  const clamp = (val: number) => Math.max(0, Math.min(1, val));
 
   const panResponder = useRef(
     PanResponder.create({
@@ -369,16 +375,16 @@ function VolumeSlider({ initialVolume, onChange }: { initialVolume: number, onCh
       onMoveShouldSetPanResponder: () => true,
       onPanResponderTerminationRequest: () => false,
       onPanResponderGrant: (evt) => {
-        const locX = evt.nativeEvent.locationX;
-        const initialP = Math.max(0, Math.min(1, locX / sliderWidth));
-        startPercentRef.current = initialP;
-        volumeRef.current = initialP;
-        setVolumePercent(initialP);
+        const p = clamp(evt.nativeEvent.locationX / sliderWidthRef.current);
+        volumeRef.current = p;
+        setVolumePercent(p);
+        onChange(Math.round(180 + p * 620));
       },
-      onPanResponderMove: (evt, gestureState) => {
-        const newP = Math.max(0, Math.min(1, startPercentRef.current + (gestureState.dx / sliderWidth)));
-        volumeRef.current = newP;
-        setVolumePercent(newP);
+      onPanResponderMove: (evt) => {
+        const p = clamp(evt.nativeEvent.locationX / sliderWidthRef.current);
+        volumeRef.current = p;
+        setVolumePercent(p);
+        onChange(Math.round(180 + p * 620));
       },
       onPanResponderRelease: () => {
         onChange(Math.round(180 + volumeRef.current * 620));
@@ -396,13 +402,17 @@ function VolumeSlider({ initialVolume, onChange }: { initialVolume: number, onCh
         </View>
       </View>
       <View
-        onLayout={(event) => setSliderWidth(event.nativeEvent.layout.width)}
+        onLayout={(event) => {
+          const w = event.nativeEvent.layout.width;
+          setSliderWidth(w);
+          sliderWidthRef.current = w;
+        }}
         {...panResponder.panHandlers}
         style={styles.slider}
       >
         <View style={styles.sliderTrack} pointerEvents="none" />
         <View style={[styles.sliderFill, { width: `${volumePercent * 100}%` }]} pointerEvents="none" />
-        <View style={[styles.knob, { left: `${Math.max(0, Math.min(100 - (24/sliderWidth)*100, volumePercent * 100))}%` }]} pointerEvents="none" />
+        <View style={[styles.knob, { left: `${Math.max(0, Math.min(100 - (24 / sliderWidthRef.current) * 100, volumePercent * 100))}%` }]} pointerEvents="none" />
       </View>
       <View style={styles.sliderLabels}>
         <Text style={styles.sliderLabel}>180 L</Text>
@@ -411,6 +421,7 @@ function VolumeSlider({ initialVolume, onChange }: { initialVolume: number, onCh
     </View>
   );
 }
+
 
 const styles = StyleSheet.create({
   title: { ...type.h1Mobile, fontFamily: fonts.heading, color: colors.onSurface, marginBottom: spacing.stackMd },

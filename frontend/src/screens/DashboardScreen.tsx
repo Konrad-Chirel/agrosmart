@@ -101,7 +101,24 @@ export function DashboardScreen({ navigation }: Props) {
     }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { 
+    load(); 
+    
+    // Poll the backend every 5 seconds to get real-time sensor updates silently
+    const interval = setInterval(async () => {
+      try {
+        const data = await AgrosmartService.getDashboard();
+        setDashboard(data);
+        const pump = await AgrosmartService.getPumpStatus().catch(() => null);
+        setPumpActive(pump?.active == null ? false : Boolean(pump.active));
+        setPumpStatus(pump?.arrosage);
+      } catch (e) {
+        // Silently ignore polling errors to not disrupt the UI
+      }
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, []);
 
   const lecture = dashboard?.capteurs;
   const decision = dashboard?.decision;

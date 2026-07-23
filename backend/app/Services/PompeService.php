@@ -24,10 +24,7 @@ class PompeService
         try {
             $topic_id = \Illuminate\Support\Facades\Cache::get("esp32_topic_for_parcelle_{$parcelle_id}", "1");
             $connection = MQTT::connection();
-            $connection->publish("agrosmart/pompes/{$topic_id}", json_encode([
-                'action' => 'demarrer_pompe',
-                'duree_minutes' => $duree_minutes,
-            ]), 1); // QoS 1 pour garantir la livraison
+            $connection->publish("agrosmart/pump/{$topic_id}", "ON", 1); // QoS 1 pour garantir la livraison
             usleep(300000); // 300ms de pause pour s'assurer que le paquet quitte le serveur
             $connection->disconnect();
         } catch (\Throwable $error) {
@@ -36,6 +33,9 @@ class PompeService
                 'message' => $error->getMessage(),
             ]);
         }
+
+        // Marquer l'instant du changement d'état pour le filtre anti-interférence capteurs
+        \Illuminate\Support\Facades\Cache::put("pump_state_changed_at_{$parcelle_id}", now(), now()->addMinutes(1));
 
         $arrosage = Arrosage::create([
             'parcelle_id' => $parcelle_id,
@@ -75,9 +75,7 @@ class PompeService
         try {
             $topic_id = \Illuminate\Support\Facades\Cache::get("esp32_topic_for_parcelle_{$parcelle_id}", "1");
             $connection = MQTT::connection();
-            $connection->publish("agrosmart/pompes/{$topic_id}", json_encode([
-                'action' => 'arreter_pompe',
-            ]), 1); // QoS 1
+            $connection->publish("agrosmart/pump/{$topic_id}", "OFF", 1); // QoS 1
             usleep(300000); // 300ms
             $connection->disconnect();
         } catch (\Throwable $error) {
@@ -86,6 +84,9 @@ class PompeService
                 'message' => $error->getMessage(),
             ]);
         }
+
+        // Marquer l'instant du changement d'état pour le filtre anti-interférence capteurs
+        \Illuminate\Support\Facades\Cache::put("pump_state_changed_at_{$parcelle_id}", now(), now()->addMinutes(1));
 
         $arrosage = Arrosage::where('parcelle_id', $parcelle_id)
             ->whereNull('fin_arrosage')

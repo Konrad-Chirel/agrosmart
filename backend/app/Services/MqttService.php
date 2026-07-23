@@ -6,6 +6,7 @@ use App\Jobs\AnalyserCapteursJob;
 use App\Jobs\RecalculerProgrammeJob;
 use App\Models\LectureCapteur;
 use App\Models\Parcelle;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use PhpMqtt\Client\Facades\MQTT;
 
@@ -57,6 +58,18 @@ class MqttService
         // On memorise l'ID utilise par l'ESP32 pour que le PompeService puisse lui repondre sur le bon canal
         \Illuminate\Support\Facades\Cache::put("esp32_topic_for_parcelle_{$parcelle->id}", $parcelle_id, now()->addDays(30));
 
+        // ── Filtre anti-interférence ──────────────────────────────────────
+        // Quand le relais de la pompe commute (ON→OFF ou OFF→ON), il crée
+        // un pic électromagnétique qui fausse les lectures du capteur
+        // capacitif d'humidité pendant quelques secondes.
+        // On ignore les mesures reçues dans les 5s suivant un changement.
+        $pumpStateKey = "pump_state_changed_at_{$parcelle->id}";
+        $lastPumpChange = Cache::get($pumpStateKey);
+        if ($lastPumpChange && now()->diffInSeconds($lastPumpChange) < 5) {
+            echo "⏳ [".now()->format('H:i:s')."] Lecture ignorée (stabilisation relais en cours)\n";
+            return null;
+        }
+
         $lecturePrecedente = $parcelle->lecturesCapteurs()->latest('lu_le')->first();
         $avant = $parcelle->lecturesCapteurs()->where('lu_le', '>=', now()->subHour())->oldest('lu_le')->first();
 
@@ -69,6 +82,8 @@ class MqttService
             'source' => 'esp32',
             'lu_le' => now(),
         ]);
+        
+        echo "✅ [".now()->format('H:i:s')."] Mesures reçues de l'ESP32 : Humidité: {$payload['humidite']}%, Temp: {$payload['temperature']}°C, Lum: {$payload['luminosite']}%\n";
 
         if (array_key_exists('niveau_reservoir', $payload)) {
             $niveau = max(0, min(100, (float) $payload['niveau_reservoir']));
